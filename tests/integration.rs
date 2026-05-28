@@ -4,6 +4,7 @@
 use warden::{evaluate, parse, Action, Effect};
 
 const EXAMPLE: &str = include_str!("../examples/agent.warden");
+const SHADOWED: &str = include_str!("../examples/shadowed.warden");
 
 fn decide(policy_src: &str, action: Action) -> Effect {
     let policy = parse(policy_src).expect("policy should parse");
@@ -81,4 +82,20 @@ fn multiple_errors_in_one_pass() {
     let src = "banana tool(\"x\")\nallow tool(\"read\") when nope matches \"y\"";
     let diags = parse(src).unwrap_err();
     assert!(diags.len() >= 2, "expected >= 2 diagnostics, got {diags:?}");
+}
+
+#[test]
+fn example_policy_has_no_unreachable_rules() {
+    let policy = parse(EXAMPLE).unwrap();
+    assert!(
+        warden::find_shadowed(&policy).is_empty(),
+        "the shipped example should have no dead rules"
+    );
+}
+
+#[test]
+fn shadowed_example_flags_dead_rules() {
+    let policy = parse(SHADOWED).unwrap();
+    let dead: Vec<usize> = warden::find_shadowed(&policy).iter().map(|l| l.rule).collect();
+    assert_eq!(dead, vec![1, 3]);
 }

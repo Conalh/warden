@@ -29,7 +29,7 @@ impl Diagnostic {
         Diagnostic { message: message.into(), span }
     }
 
-    /// Render against the original source, e.g.
+    /// Render against the original source with an `error:` label, e.g.
     /// ```text
     /// error: unknown field `paht`
     ///  --> line 3, col 11
@@ -38,6 +38,11 @@ impl Diagnostic {
     ///   |                         ^^^^
     /// ```
     pub fn render(&self, source: &str) -> String {
+        self.render_labeled(source, "error")
+    }
+
+    /// Render with a caller-chosen severity label (e.g. `"error"`, `"warning"`).
+    pub fn render_labeled(&self, source: &str, label: &str) -> String {
         let line_text = source
             .lines()
             .nth(self.span.line.saturating_sub(1) as usize)
@@ -48,7 +53,7 @@ impl Diagnostic {
         let caret_len = (self.span.end.saturating_sub(self.span.start)).max(1);
         let carets = "^".repeat(caret_len);
         format!(
-            "error: {msg}\n{pad} --> line {line}, col {col}\n{pad} |\n{gutter} | {line_text}\n{pad} | {caret_pad}{carets}",
+            "{label}: {msg}\n{pad} --> line {line}, col {col}\n{pad} |\n{gutter} | {line_text}\n{pad} | {caret_pad}{carets}",
             msg = self.message,
             line = self.span.line,
             col = self.span.col,

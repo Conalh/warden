@@ -23,6 +23,7 @@
 //! assert_eq!(verdict.effect, warden::Effect::Deny);
 //! ```
 
+pub mod analysis;
 pub mod ast;
 pub mod diagnostics;
 pub mod eval;
@@ -32,6 +33,7 @@ mod matcher;
 mod parser;
 mod token;
 
+pub use analysis::{find_shadowed, Lint};
 pub use ast::{Effect, Expr, Field, Policy, Rule};
 pub use diagnostics::{render_all, Diagnostic, Span};
 pub use eval::{evaluate, Action, Verdict};

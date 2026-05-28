@@ -1,0 +1,14 @@
+# A policy with two unreachable rules, to demonstrate `warden`'s linter.
+# Run:  warden examples/shadowed.warden
+
+default ask
+
+# This unconditional rule matches every `read`...
+allow tool("read")
+# ...so this stricter rule below can never fire (it is shadowed).
+deny  tool("read") when path matches "**/.env*"
+
+# A catch-all that matches everything...
+ask   tool("*")
+# ...makes this rule dead too, regardless of its tool or condition.
+allow tool("bash") when command matches "git *"

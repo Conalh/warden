@@ -4,7 +4,7 @@
 //!   warden <policy-file>                              validate the policy
 //!   warden <policy-file> --tool <name> [--path P] [--command C]
 //!
-//! Exit codes: 0 allow/ask, 1 deny, 2 policy parse error, 64 usage error.
+//! Exit codes: 0 allow/ask, 1 deny, 2 parse error, 3 unreachable rules, 64 usage error.
 
 use std::process::ExitCode;
 
@@ -56,12 +56,17 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     };
 
     let Some(tool) = tool else {
-        println!(
-            "policy ok: {} rule(s), default `{}`",
-            policy.rules.len(),
-            policy.default.as_str()
-        );
-        return Ok(ExitCode::SUCCESS);
+        println!("{} rule(s), default `{}`", policy.rules.len(), policy.default.as_str());
+        let lints = warden::find_shadowed(&policy);
+        if lints.is_empty() {
+            println!("policy ok: no unreachable rules.");
+            return Ok(ExitCode::SUCCESS);
+        }
+        for lint in &lints {
+            eprintln!("{}\n", lint.to_diagnostic().render_labeled(&source, "warning"));
+        }
+        eprintln!("{} unreachable rule(s) found.", lints.len());
+        return Ok(ExitCode::from(3));
     };
 
     let mut action = Action::new(tool);
@@ -100,6 +105,6 @@ fn print_usage() {
          \x20 warden policy.warden --tool bash --command \"rm -rf /\"\n\
          \x20 warden policy.warden --tool read --path src/main.rs\n\n\
          EXIT CODES:\n\
-         \x20 0  allow or ask    1  deny    2  parse error    64  usage error"
+         \x20 0  allow/ask   1  deny   2  parse error   3  unreachable rules   64  usage error"
     );
 }

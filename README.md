@@ -28,8 +28,8 @@ cargo run -- examples/agent.warden --tool read --path src/main.rs
 #   decision: ALLOW
 ```
 
-Exit codes: `0` allow/ask · `1` deny · `2` parse error · `64` usage error — so
-`warden` drops straight into a shell guard or CI check.
+Exit codes: `0` allow/ask · `1` deny · `2` parse error · `3` unreachable rules ·
+`64` usage error — so `warden` drops straight into a shell guard or CI check.
 
 ## The language
 
@@ -54,6 +54,29 @@ ask   tool("write") when path matches "**/*.json" and not path matches "package.
   where `<field>` is `path` or `command`.
 - **Operators:** `not` (tightest) → `and` → `or` (loosest); parenthesize to override.
 - **Globs:** `*` (any run), `?` (one char). `#` starts a comment.
+
+## Linting: unreachable rules
+
+Because resolution is first-match-wins, a rule is **dead** if an earlier rule
+always matches first. `warden` finds these statically — running it on a policy
+(no action) reports every shadowed rule and exits `3`:
+
+```text
+$ warden examples/shadowed.warden
+4 rule(s), default `ask`
+warning: unreachable rule: rule 1 at line 7 (an unconditional `allow tool("read")`) always matches first
+  --> line 9, col 1
+  |
+9 | deny  tool("read") when path matches "**/.env*"
+  | ^^^^
+```
+
+The analysis is **sound, not complete**: every rule it flags is genuinely
+unreachable (no false positives), but it reasons pairwise — about one covering
+rule at a time, with conservative glob subsumption — so it may miss deadness
+that only emerges from the *union* of several earlier rules. In a linter, a
+false "this rule is dead" is far worse than a missed one. See
+[`src/analysis.rs`](src/analysis.rs).
 
 ## Grammar (EBNF)
 
@@ -86,6 +109,7 @@ per precedence level — see [`src/parser.rs`](src/parser.rs).
 | [`ast.rs`](src/ast.rs) | `Policy` / `Rule` / `Expr` — the recursive tree |
 | [`parser.rs`](src/parser.rs) | Recursive descent + Pratt; error recovery |
 | [`eval.rs`](src/eval.rs) | Tree-walking evaluator, first-match resolution |
+| [`analysis.rs`](src/analysis.rs) | Static detection of unreachable (shadowed) rules |
 | [`matcher.rs`](src/matcher.rs) | Backtracking glob matcher |
 | [`diagnostics.rs`](src/diagnostics.rs) | Spans + rustc-style caret rendering |
 
@@ -104,12 +128,13 @@ per precedence level — see [`src/parser.rs`](src/parser.rs).
 
 ## Roadmap
 
-- **v1:** `deny`-overrides combining mode; segment-aware `**` (not crossing `/`).
-- **v2:** static validation pass and **conflict/shadow detection** ("rule 6 can
-  never fire — rule 2 already subsumes it"), a reachability analysis over rules.
-- **v3:** a full **decision trace** ("DENY because line 16: `command contains 'rm -rf'`"),
-  a `wasm-bindgen` build powering an in-browser playground, and `cargo fuzz` on
-  the parser.
+- **Done:** **conflict/shadow detection** — static reachability analysis that
+  flags rules an earlier rule already subsumes (see above).
+- **Next:** `deny`-overrides combining mode; segment-aware `**` (not crossing
+  `/`); richer glob subsumption in the shadow analysis.
+- **Later:** a full **decision trace** ("DENY because line 16: `command contains
+  'rm -rf'`"), a `wasm-bindgen` build powering an in-browser playground, and
+  `cargo fuzz` on the parser.
 
 ## Tests
 
