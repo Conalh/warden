@@ -14,6 +14,7 @@
 
 use crate::ast::{Expr, Policy, Rule};
 use crate::diagnostics::{Diagnostic, Span};
+use crate::matcher::glob_subsumes;
 
 /// One unreachable rule and the earlier rule that shadows it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -63,38 +64,64 @@ fn subsumes(earlier: &Rule, later: &Rule) -> bool {
 }
 
 /// Sound check: does glob `a` match every tool string that glob `b` matches?
-///
-/// Handles the cases we can prove: identical patterns, the `*` catch-all, and
-/// a literal-prefix-then-`*` pattern (`git*`) against any pattern whose own
-/// literal prefix starts with it. Everything else is conservatively `false`.
+/// Delegates to the glob language-inclusion decision in [`crate::matcher`].
 fn tool_subsumes(a: &str, b: &str) -> bool {
-    if a == b || a == "*" {
-        return true;
-    }
-    // Every string `b` matches begins with `prefix`'s literal chars, and
-    // `prefix*` matches anything beginning with them.
-    if let Some(prefix) = a.strip_suffix('*')
-        && is_literal(prefix)
-        && b.starts_with(prefix)
-    {
-        return true;
-    }
-    false
-}
-
-fn is_literal(s: &str) -> bool {
-    !s.contains('*') && !s.contains('?')
+    glob_subsumes(a, b)
 }
 
 /// Sound check: whenever `later`'s condition holds, does `earlier`'s also hold?
 ///
-/// `earlier == None` matches unconditionally, so it subsumes anything. A
-/// structurally identical condition subsumes too. We do not attempt general
-/// implication between different conditions.
+/// `earlier == None` matches unconditionally, so it subsumes anything.
+/// Otherwise we ask whether `earlier`'s condition is *implied by* `later`'s —
+/// see [`expr_subsumes`].
 fn condition_subsumes(earlier: &Option<Expr>, later: &Option<Expr>) -> bool {
     match earlier {
         None => true,
-        Some(e) => matches!(later, Some(l) if expr_eq(e, l)),
+        Some(e) => matches!(later, Some(l) if expr_subsumes(e, l)),
+    }
+}
+
+/// Sound check: does `earlier` hold whenever `later` holds (`later` ⟹
+/// `earlier`)? Conservative — every `true` is provable, but some true
+/// implications go unrecognized.
+///
+/// Beyond structural equality we exploit:
+/// - a conjunction is implied if *all* its parts are (`earlier` an `and`), and
+///   implies anything one of its parts does (`later` an `and`);
+/// - a disjunction implies a goal only if *both* arms do (`later` an `or`), and
+///   is implied if *either* of its arms is (`earlier` an `or`);
+/// - on leaves, `path matches A` is implied by `path matches B` when
+///   [`glob_subsumes`]`(A, B)` holds, and `command contains X` by
+///   `command contains Y` when `X` is a substring of `Y`.
+///
+/// `not` is only handled via the equality fast-path, which is always sound.
+fn expr_subsumes(earlier: &Expr, later: &Expr) -> bool {
+    if expr_eq(earlier, later) {
+        return true;
+    }
+    match earlier {
+        Expr::And(e1, e2) => expr_subsumes(e1, later) && expr_subsumes(e2, later),
+        Expr::Or(e1, e2) => expr_subsumes(e1, later) || expr_subsumes(e2, later),
+        _ => match later {
+            Expr::And(l1, l2) => expr_subsumes(earlier, l1) || expr_subsumes(earlier, l2),
+            Expr::Or(l1, l2) => expr_subsumes(earlier, l1) && expr_subsumes(earlier, l2),
+            _ => leaf_subsumes(earlier, later),
+        },
+    }
+}
+
+/// Implication between two leaf predicates (no `and`/`or`/`not`).
+fn leaf_subsumes(earlier: &Expr, later: &Expr) -> bool {
+    match (earlier, later) {
+        (
+            Expr::Match { field: ef, pattern: ep, .. },
+            Expr::Match { field: lf, pattern: lp, .. },
+        ) => ef == lf && glob_subsumes(ep, lp),
+        (
+            Expr::Contains { field: ef, needle: en, .. },
+            Expr::Contains { field: lf, needle: ln, .. },
+        ) => ef == lf && ln.contains(en.as_str()),
+        _ => false,
     }
 }
 
@@ -124,7 +151,7 @@ fn explain(index: usize, earlier: &Rule) -> String {
             format!("an unconditional `{} tool(\"{}\")`", earlier.effect.as_str(), earlier.tool)
         }
     } else {
-        format!("a rule with the same condition (`{} tool(\"{}\")`)", earlier.effect.as_str(), earlier.tool)
+        format!("a broader rule (`{} tool(\"{}\")`)", earlier.effect.as_str(), earlier.tool)
     };
     format!(
         "unreachable rule: rule {} at line {} ({}) always matches first",
@@ -220,6 +247,81 @@ mod tests {
             r#"
             allow tool("read")
             allow tool("write")
+        "#,
+        );
+        assert!(dead.is_empty(), "unexpected shadows: {dead:?}");
+    }
+
+    #[test]
+    fn broader_glob_shadows_narrower() {
+        // `path matches "**"` covers `path matches "src/**"`, so the second
+        // rule is dead even though the effects differ.
+        let dead = shadowed_indices(
+            r#"
+            allow tool("read") when path matches "**"
+            deny  tool("read") when path matches "src/**"
+        "#,
+        );
+        assert_eq!(dead, vec![1]);
+    }
+
+    #[test]
+    fn narrower_glob_does_not_shadow_broader() {
+        // The reverse must NOT be flagged: `src/**` leaves non-src paths for
+        // the later `**` rule to handle.
+        let dead = shadowed_indices(
+            r#"
+            deny tool("read") when path matches "src/**"
+            deny tool("read") when path matches "**"
+        "#,
+        );
+        assert!(dead.is_empty(), "unexpected shadows: {dead:?}");
+    }
+
+    #[test]
+    fn shorter_substring_shadows_longer_contains() {
+        // Anything containing "rm -rf" contains "rm", so the second is dead.
+        let dead = shadowed_indices(
+            r#"
+            deny tool("bash") when command contains "rm"
+            deny tool("bash") when command contains "rm -rf"
+        "#,
+        );
+        assert_eq!(dead, vec![1]);
+    }
+
+    #[test]
+    fn conjunction_is_shadowed_by_one_of_its_parts() {
+        // The later `and` only fires when its `contains "rm -rf"` part holds,
+        // which already implies the earlier `contains "rm"`.
+        let dead = shadowed_indices(
+            r#"
+            deny tool("bash") when command contains "rm"
+            deny tool("bash") when command contains "rm -rf" and path matches "src/**"
+        "#,
+        );
+        assert_eq!(dead, vec![1]);
+    }
+
+    #[test]
+    fn narrower_conjunction_does_not_shadow_broader() {
+        // Earlier requires an extra `path` clause, so it does NOT cover the
+        // later command-only rule — that rule still fires for non-src paths.
+        let dead = shadowed_indices(
+            r#"
+            deny tool("bash") when command contains "rm" and path matches "src/**"
+            deny tool("bash") when command contains "rm"
+        "#,
+        );
+        assert!(dead.is_empty(), "unexpected shadows: {dead:?}");
+    }
+
+    #[test]
+    fn different_field_does_not_shadow() {
+        let dead = shadowed_indices(
+            r#"
+            deny tool("x") when path matches "**"
+            deny tool("x") when command matches "y"
         "#,
         );
         assert!(dead.is_empty(), "unexpected shadows: {dead:?}");

@@ -13,6 +13,10 @@
 //! `(pattern index, text index)`, which bounds it to `O(pattern * text)` and
 //! lets `**` try every split point — a single greedy star anchor cannot,
 //! because a later segment-bounded `*` may force an earlier `**` to grow.
+//!
+//! The same module also answers a *static* question for the shadow analysis:
+//! [`glob_subsumes`] decides whether one glob's match-set contains another's
+//! (glob language inclusion), conservatively and with the same segment rules.
 
 pub fn glob_match(pattern: &str, text: &str) -> bool {
     let pat: Vec<char> = pattern.chars().collect();
@@ -67,9 +71,119 @@ fn compute(pat: &[char], txt: &[char], pi: usize, ti: usize, cache: &mut [u8], w
     }
 }
 
+/// A pattern token, the unit the subsumption check reasons over. A maximal run
+/// of `*` collapses to one token: two or more stars become [`Tok::DStar`]
+/// (spans `/`), a lone star [`Tok::Star`] (stays in a segment).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Tok {
+    Lit(char),
+    Any1,
+    Star,
+    DStar,
+}
+
+fn tokenize(pattern: &str) -> Vec<Tok> {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut toks = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '*' => {
+                let start = i;
+                while i < chars.len() && chars[i] == '*' {
+                    i += 1;
+                }
+                toks.push(if i - start >= 2 { Tok::DStar } else { Tok::Star });
+            }
+            '?' => {
+                toks.push(Tok::Any1);
+                i += 1;
+            }
+            c => {
+                toks.push(Tok::Lit(c));
+                i += 1;
+            }
+        }
+    }
+    toks
+}
+
+/// Sound check: does glob `a` match **every** string that glob `b` matches —
+/// i.e. is `L(a)` a superset of `L(b)`?
+///
+/// This is glob *language inclusion*, used by the shadow analysis to decide
+/// when one rule's pattern already covers another's. It is deliberately
+/// **conservative**: it may answer `false` when the true answer is `true`, but
+/// never the reverse — a linter must not wrongly call a reachable rule dead.
+/// The segment rules from [`glob_match`] carry over: a single `*`/`?` never
+/// spans `/`, while `**` does.
+pub(crate) fn glob_subsumes(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    let at = tokenize(a);
+    let bt = tokenize(b);
+    let width = bt.len() + 1;
+    let mut cache = vec![0u8; (at.len() + 1) * width];
+    covers(&at, &bt, 0, 0, &mut cache, width)
+}
+
+fn covers(a: &[Tok], b: &[Tok], ai: usize, bi: usize, cache: &mut [u8], width: usize) -> bool {
+    let key = ai * width + bi;
+    match cache[key] {
+        1 => return true,
+        2 => return false,
+        _ => {}
+    }
+    let result = covers_compute(a, b, ai, bi, cache, width);
+    cache[key] = if result { 1 } else { 2 };
+    result
+}
+
+fn covers_compute(a: &[Tok], b: &[Tok], ai: usize, bi: usize, cache: &mut [u8], width: usize) -> bool {
+    if ai == a.len() {
+        // `a` can now only produce "", so it covers `b` iff `b` is also spent.
+        return bi == b.len();
+    }
+    if bi == b.len() {
+        // `b` produces only ""; `a` covers it iff its tail can be empty too.
+        return a[ai..].iter().all(|t| matches!(t, Tok::Star | Tok::DStar));
+    }
+    match a[ai] {
+        // A literal in `a` is only covered if `b` forces that exact char next.
+        Tok::Lit(c) => match b[bi] {
+            Tok::Lit(d) => c == d && covers(a, b, ai + 1, bi + 1, cache, width),
+            _ => false,
+        },
+        // `?` consumes exactly one non-`/` char, so `b` must produce exactly one.
+        Tok::Any1 => match b[bi] {
+            Tok::Lit(d) => d != '/' && covers(a, b, ai + 1, bi + 1, cache, width),
+            Tok::Any1 => covers(a, b, ai + 1, bi + 1, cache, width),
+            _ => false,
+        },
+        // A single `*` matches a run of non-`/` chars: skip it, or let it
+        // absorb one `b` token — but only one that can't yield a `/`.
+        Tok::Star => {
+            if covers(a, b, ai + 1, bi, cache, width) {
+                return true;
+            }
+            let absorbable = match b[bi] {
+                Tok::Lit(d) => d != '/',
+                Tok::Any1 | Tok::Star => true,
+                Tok::DStar => false,
+            };
+            absorbable && covers(a, b, ai, bi + 1, cache, width)
+        }
+        // `**` matches anything: skip it, or absorb any one `b` token.
+        Tok::DStar => {
+            covers(a, b, ai + 1, bi, cache, width) || covers(a, b, ai, bi + 1, cache, width)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::glob_match;
+    use super::{glob_match, glob_subsumes};
 
     #[test]
     fn literal() {
@@ -111,5 +225,31 @@ mod tests {
         assert!(glob_match("*", ""));
         assert!(glob_match("**", ""));
         assert!(glob_match("**", "a/b/c"));
+    }
+
+    #[test]
+    fn subsumes_reflexive_and_catch_all() {
+        assert!(glob_subsumes("src/**", "src/**"));
+        assert!(glob_subsumes("**", "src/**"));
+        assert!(glob_subsumes("**", "anything/at/all.txt"));
+        assert!(glob_subsumes("git*", "git status"));
+    }
+
+    #[test]
+    fn subsumes_respects_segments() {
+        // `**` reaches across `/`, a single `*` does not, so neither direction
+        // of `*` vs `src/**` may be claimed.
+        assert!(!glob_subsumes("*", "src/**"));
+        assert!(!glob_subsumes("src/*", "src/a/b"));
+        // The narrower pattern never subsumes the broader one.
+        assert!(!glob_subsumes("src/**", "**"));
+    }
+
+    #[test]
+    fn subsumes_literal_is_just_a_match() {
+        // When `b` has no wildcards it denotes one string, so inclusion is a
+        // plain match of `a` against it.
+        assert!(glob_subsumes("src/**", "src/main.rs"));
+        assert!(!glob_subsumes("src/*", "src/a/b.rs"));
     }
 }

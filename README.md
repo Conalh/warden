@@ -99,13 +99,39 @@ always matches first. `warden` finds these statically — running it on a policy
 
 ```text
 $ warden examples/shadowed.warden
-4 rule(s), default `ask`
-warning: unreachable rule: rule 1 at line 7 (an unconditional `allow tool("read")`) always matches first
-  --> line 9, col 1
-  |
-9 | deny  tool("read") when path matches "**/.env*"
-  | ^^^^
+8 rule(s), default `ask`, mode `first_match`
+warning: unreachable rule: rule 1 at line 8 (an unconditional `allow tool("read")`) always matches first
+   --> line 10, col 1
+   |
+10 | deny  tool("read") when path matches "**/.env*"
+   | ^^^^
+
+warning: unreachable rule: rule 3 at line 13 (a broader rule (`deny tool("write")`)) always matches first
+   --> line 15, col 1
+   |
+15 | allow tool("write") when path matches "src/**"
+   | ^^^^^
+
+warning: unreachable rule: rule 5 at line 18 (a broader rule (`deny tool("bash")`)) always matches first
+   --> line 20, col 1
+   |
+20 | deny  tool("bash") when command contains "rm -rf"
+   | ^^^^
+
+warning: unreachable rule: rule 7 at line 23 (an unconditional catch-all `ask tool("*")`) always matches first
+   --> line 25, col 1
+   |
+25 | allow tool("browse") when path matches "**"
+   | ^^^^^
+
+4 unreachable rule(s) found.
 ```
+
+[`examples/shadowed.warden`](examples/shadowed.warden) packs one of each shadow
+mechanism the analysis understands: an unconditional rule swallowing a later
+conditional one, a broad glob subsuming a narrower one (`**` over `src/**`), a
+shorter `contains` substring covering a longer one (`"rm"` over `"rm -rf"`), and
+a `tool("*")` catch-all killing everything after it.
 
 The analysis is **sound, not complete**: every rule it flags is genuinely
 unreachable (no false positives), but it reasons pairwise — about one covering
@@ -174,10 +200,12 @@ per precedence level — see [`src/parser.rs`](src/parser.rs).
   **`deny`-overrides** — opt-in combining mode where the most restrictive
   matching rule wins, order-independent. **Segment-aware globs** — `/` is a
   hard boundary; `*` stays within a path segment while `**` spans them.
-- **Next:** richer glob subsumption in the shadow analysis (teach it the
-  segment-aware `*`/`**` distinction).
-- **Later:** a `wasm-bindgen` build powering an in-browser playground, and
-  `cargo fuzz` on the parser.
+  **Richer glob subsumption** — the shadow analysis decides glob *language
+  inclusion* with the same segment rules, so `**` is recognized as covering
+  `src/**` while a single `*` is not.
+- **Next:** `cargo fuzz` on the parser.
+- **Later:** a `wasm-bindgen` build powering an in-browser playground, keeping
+  the core crate zero-dependency by isolating the wasm glue behind a feature.
 
 ## Tests
 

@@ -1,14 +1,25 @@
-# A policy with two unreachable rules, to demonstrate `warden`'s linter.
+# A policy riddled with unreachable rules, to exercise `warden`'s linter.
+# Each pair below shows a different way an earlier rule can shadow a later one.
 # Run:  warden examples/shadowed.warden
 
 default ask
 
-# This unconditional rule matches every `read`...
+# (1) An unconditional rule matches every `read`...
 allow tool("read")
-# ...so this stricter rule below can never fire (it is shadowed).
+# ...so this stricter rule can never fire — shadowed by an unconditional rule.
 deny  tool("read") when path matches "**/.env*"
 
-# A catch-all that matches everything...
+# (2) A broad glob subsumes a narrower one: `**` covers any write path...
+deny  tool("write") when path matches "**"
+# ...so this `src/**` rule is dead — caught by glob subsumption.
+allow tool("write") when path matches "src/**"
+
+# (3) `contains "rm"` holds whenever `contains "rm -rf"` does...
+deny  tool("bash") when command contains "rm"
+# ...so this more specific rule is redundant.
+deny  tool("bash") when command contains "rm -rf"
+
+# (4) A catch-all matches every tool...
 ask   tool("*")
-# ...makes this rule dead too, regardless of its tool or condition.
-allow tool("bash") when command matches "git *"
+# ...so anything after it is dead regardless of tool or condition.
+allow tool("browse") when path matches "**"

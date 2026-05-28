@@ -143,5 +143,5 @@ fn same_rules_differ_by_mode() {
 fn shadowed_example_flags_dead_rules() {
     let policy = parse(SHADOWED).unwrap();
     let dead: Vec<usize> = warden::find_shadowed(&policy).iter().map(|l| l.rule).collect();
-    assert_eq!(dead, vec![1, 3]);
+    assert_eq!(dead, vec![1, 3, 5, 7]);
 }
