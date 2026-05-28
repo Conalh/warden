@@ -129,11 +129,12 @@ per precedence level — see [`src/parser.rs`](src/parser.rs).
 ## Roadmap
 
 - **Done:** **conflict/shadow detection** — static reachability analysis that
-  flags rules an earlier rule already subsumes (see above).
+  flags rules an earlier rule already subsumes (see above). **Decision trace** —
+  the verdict resolves `when <condition>` down to the leaf predicate that fired,
+  with concrete values (`command "rm -rf /tmp" contains "rm -rf"`).
 - **Next:** `deny`-overrides combining mode; segment-aware `**` (not crossing
   `/`); richer glob subsumption in the shadow analysis.
-- **Later:** a full **decision trace** ("DENY because line 16: `command contains
-  'rm -rf'`"), a `wasm-bindgen` build powering an in-browser playground, and
+- **Later:** a `wasm-bindgen` build powering an in-browser playground, and
   `cargo fuzz` on the parser.
 
 ## Tests
