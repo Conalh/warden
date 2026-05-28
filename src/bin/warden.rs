@@ -8,7 +8,7 @@
 
 use std::process::ExitCode;
 
-use warden::{Action, Effect};
+use warden::{Action, Effect, Mode};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -56,7 +56,18 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     };
 
     let Some(tool) = tool else {
-        println!("{} rule(s), default `{}`", policy.rules.len(), policy.default.as_str());
+        println!(
+            "{} rule(s), default `{}`, mode `{}`",
+            policy.rules.len(),
+            policy.default.as_str(),
+            policy.mode.as_str()
+        );
+        // Unreachable-rule analysis is a first-match notion; under
+        // deny-overrides a later `deny` can still win, so we don't run it.
+        if policy.mode != Mode::FirstMatch {
+            println!("policy ok: unreachable-rule analysis applies to `first_match` only; skipped.");
+            return Ok(ExitCode::SUCCESS);
+        }
         let lints = warden::find_shadowed(&policy);
         if lints.is_empty() {
             println!("policy ok: no unreachable rules.");

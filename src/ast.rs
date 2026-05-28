@@ -21,6 +21,37 @@ impl Effect {
     }
 }
 
+/// How matching rules are combined into a verdict.
+///
+/// `FirstMatch` walks rules top-to-bottom and the first match wins — order
+/// *is* the priority. `DenyOverrides` instead collects every matching rule and
+/// lets the most restrictive effect win (`deny` > `ask` > `allow`), regardless
+/// of order; this is the conservative combining algorithm familiar from
+/// XACML / AWS Cedar's `forbid` precedence.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Mode {
+    #[default]
+    FirstMatch,
+    DenyOverrides,
+}
+
+impl Mode {
+    pub fn from_ident(name: &str) -> Option<Mode> {
+        match name {
+            "first_match" => Some(Mode::FirstMatch),
+            "deny_overrides" => Some(Mode::DenyOverrides),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Mode::FirstMatch => "first_match",
+            Mode::DenyOverrides => "deny_overrides",
+        }
+    }
+}
+
 /// A field of the action context that a predicate can inspect. Keeping this a
 /// closed enum (rather than an arbitrary string) is what lets the parser
 /// reject `paht matches "..."` at parse time instead of silently never firing.
@@ -69,9 +100,11 @@ pub struct Rule {
     pub span: Span,
 }
 
-/// A whole policy file: an ordered list of rules plus the fallback effect.
+/// A whole policy file: an ordered list of rules, the fallback effect, and the
+/// combining [`Mode`] that decides how matching rules resolve to a verdict.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Policy {
     pub default: Effect,
+    pub mode: Mode,
     pub rules: Vec<Rule>,
 }

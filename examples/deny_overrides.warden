@@ -1,0 +1,20 @@
+# Same policy intent, but combined with deny-overrides instead of first-match.
+#
+# Under `mode deny_overrides` order stops being priority: every matching rule
+# is collected and the most restrictive effect wins (deny > ask > allow). So
+# the broad `allow tool("*")` below does NOT shadow the later denies the way it
+# would under first-match — a matching `deny` always overrides it.
+
+mode deny_overrides
+default ask
+
+# Broadly permit reads and writes...
+allow tool("read")
+allow tool("write")
+
+# ...but these denies override wherever they also match, regardless of order.
+deny  tool("*")     when path matches "**/.env*" or path matches "**/id_rsa*"
+deny  tool("read")  when path matches "**/*.pem"
+
+# Confirm config writes; this `ask` overrides the broad `allow` above.
+ask   tool("write") when path matches "**/*.json"

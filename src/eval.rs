@@ -3,7 +3,7 @@
 //! default. This is first-match-wins resolution — the simplest semantics that
 //! is still predictable. (`deny`-overrides is a planned v1 toggle.)
 
-use crate::ast::{Effect, Expr, Field, Policy, Rule};
+use crate::ast::{Effect, Expr, Field, Mode, Policy, Rule};
 use crate::matcher::glob_match;
 
 /// The action an agent wants to take, evaluated against a policy.
@@ -47,15 +47,17 @@ pub struct Verdict {
 }
 
 pub fn evaluate(policy: &Policy, action: &Action) -> Verdict {
+    match policy.mode {
+        Mode::FirstMatch => evaluate_first_match(policy, action),
+        Mode::DenyOverrides => evaluate_deny_overrides(policy, action),
+    }
+}
+
+/// Walk rules top-to-bottom; the first whose tool and condition both match
+/// wins. Order is the priority.
+fn evaluate_first_match(policy: &Policy, action: &Action) -> Verdict {
     for (index, rule) in policy.rules.iter().enumerate() {
-        if !glob_match(&rule.tool, &action.tool) {
-            continue;
-        }
-        let condition_holds = match &rule.condition {
-            None => true,
-            Some(expr) => eval_expr(expr, action),
-        };
-        if condition_holds {
+        if rule_matches(rule, action) {
             return Verdict {
                 effect: rule.effect,
                 matched_rule: Some(index),
@@ -63,10 +65,64 @@ pub fn evaluate(policy: &Policy, action: &Action) -> Verdict {
             };
         }
     }
+    default_verdict(policy)
+}
+
+/// Collect every matching rule and let the most restrictive effect win
+/// (`deny` > `ask` > `allow`), independent of source order. Among rules of the
+/// winning effect the earliest is reported, and if it overrode a less
+/// restrictive match the trace names that rule.
+fn evaluate_deny_overrides(policy: &Policy, action: &Action) -> Verdict {
+    let matches: Vec<(usize, &Rule)> = policy
+        .rules
+        .iter()
+        .enumerate()
+        .filter(|(_, rule)| rule_matches(rule, action))
+        .collect();
+
+    let Some(top) = matches.iter().map(|(_, r)| restrictiveness(r.effect)).max() else {
+        return default_verdict(policy);
+    };
+
+    // Earliest rule carrying the winning effect — stable, intuitive to trace.
+    let (index, rule) = matches.iter().find(|(_, r)| restrictiveness(r.effect) == top).unwrap();
+    let mut explanation = explain(*index, rule, action);
+    if let Some((over_idx, over)) = matches.iter().find(|(_, r)| restrictiveness(r.effect) < top) {
+        explanation += &format!(
+            "; under deny_overrides this beats rule {} ({} tool(\"{}\"))",
+            over_idx + 1,
+            over.effect.as_str(),
+            over.tool
+        );
+    }
+    Verdict { effect: rule.effect, matched_rule: Some(*index), explanation }
+}
+
+fn default_verdict(policy: &Policy) -> Verdict {
     Verdict {
         effect: policy.default,
         matched_rule: None,
         explanation: format!("no rule matched; applied default `{}`", policy.default.as_str()),
+    }
+}
+
+/// Does this rule's tool glob and (optional) condition both hold for the action?
+fn rule_matches(rule: &Rule, action: &Action) -> bool {
+    glob_match(&rule.tool, &action.tool)
+        && match &rule.condition {
+            None => true,
+            Some(expr) => eval_expr(expr, action),
+        }
+}
+
+/// How strongly an effect constrains the action, for `deny_overrides`. A higher
+/// rank wins: `deny` blocks outright, `ask` escalates to a human, `allow` is
+/// the most permissive.
+fn restrictiveness(effect: Effect) -> u8 {
+    match effect {
+        Effect::Deny => 2,
+        Effect::Ask => 1,
+        Effect::Allow => 0,
     }
 }
 
@@ -239,6 +295,67 @@ mod tests {
         let v = evaluate(&p, &Action::new("write").with_path("tsconfig.json"));
         assert!(
             v.explanation.contains(r#"path "tsconfig.json" does not match "package.json""#),
+            "got: {}",
+            v.explanation
+        );
+    }
+
+    #[test]
+    fn deny_overrides_lets_a_later_deny_win() {
+        let p = policy(
+            r#"
+            mode deny_overrides
+            allow tool("read")
+            deny  tool("read") when path matches "**/.env*"
+        "#,
+        );
+        // First-match would allow this (rule 1 fires first); deny-overrides denies.
+        let secret = Action::new("read").with_path("config/.env.local");
+        assert_eq!(evaluate(&p, &secret).effect, Effect::Deny);
+        // A non-secret path has only the allow matching.
+        let ordinary = Action::new("read").with_path("src/main.rs");
+        assert_eq!(evaluate(&p, &ordinary).effect, Effect::Allow);
+    }
+
+    #[test]
+    fn deny_overrides_ask_beats_allow() {
+        let p = policy(
+            r#"
+            mode deny_overrides
+            allow tool("write")
+            ask   tool("write") when path matches "**/*.json"
+        "#,
+        );
+        let v = evaluate(&p, &Action::new("write").with_path("app/tsconfig.json"));
+        assert_eq!(v.effect, Effect::Ask);
+    }
+
+    #[test]
+    fn deny_overrides_falls_through_to_default() {
+        let p = policy(
+            r#"
+            mode deny_overrides
+            default deny
+            allow tool("read")
+        "#,
+        );
+        let v = evaluate(&p, &Action::new("write").with_path("x"));
+        assert_eq!(v.effect, Effect::Deny);
+        assert_eq!(v.matched_rule, None);
+    }
+
+    #[test]
+    fn deny_overrides_trace_names_the_beaten_rule() {
+        let p = policy(
+            r#"
+            mode deny_overrides
+            allow tool("read")
+            deny  tool("read") when path matches "**/.env*"
+        "#,
+        );
+        let v = evaluate(&p, &Action::new("read").with_path("config/.env.local"));
+        assert!(
+            v.explanation.contains("under deny_overrides this beats rule 1"),
             "got: {}",
             v.explanation
         );

@@ -1,10 +1,11 @@
 //! End-to-end tests over the full pipeline (parse -> evaluate) and the
 //! diagnostics surface, including the shipped example policy.
 
-use warden::{evaluate, parse, Action, Effect};
+use warden::{evaluate, parse, Action, Effect, Mode};
 
 const EXAMPLE: &str = include_str!("../examples/agent.warden");
 const SHADOWED: &str = include_str!("../examples/shadowed.warden");
+const DENY_OVERRIDES: &str = include_str!("../examples/deny_overrides.warden");
 
 fn decide(policy_src: &str, action: Action) -> Effect {
     let policy = parse(policy_src).expect("policy should parse");
@@ -91,6 +92,51 @@ fn example_policy_has_no_unreachable_rules() {
         warden::find_shadowed(&policy).is_empty(),
         "the shipped example should have no dead rules"
     );
+}
+
+#[test]
+fn deny_overrides_example_resolves_by_restrictiveness() {
+    let policy = parse(DENY_OVERRIDES).expect("deny-overrides example must parse");
+    assert_eq!(policy.mode, Mode::DenyOverrides);
+
+    // The broad `allow tool("read")` is overridden wherever a deny matches.
+    assert_eq!(
+        evaluate(&policy, &Action::new("read").with_path("config/.env.local")).effect,
+        Effect::Deny
+    );
+    assert_eq!(
+        evaluate(&policy, &Action::new("read").with_path("keys/server.pem")).effect,
+        Effect::Deny
+    );
+    // A plain read still resolves to allow.
+    assert_eq!(
+        evaluate(&policy, &Action::new("read").with_path("src/main.rs")).effect,
+        Effect::Allow
+    );
+    // `ask` on json overrides the broad write allow.
+    assert_eq!(
+        evaluate(&policy, &Action::new("write").with_path("app/tsconfig.json")).effect,
+        Effect::Ask
+    );
+    // A plain write is just allowed.
+    assert_eq!(
+        evaluate(&policy, &Action::new("write").with_path("src/lib.rs")).effect,
+        Effect::Allow
+    );
+}
+
+#[test]
+fn same_rules_differ_by_mode() {
+    // Identical rule body; only the combining mode changes the verdict.
+    let body = r#"
+        allow tool("read")
+        deny  tool("read") when path matches "**/.env*"
+    "#;
+    let first = parse(body).unwrap();
+    let overrides = parse(&format!("mode deny_overrides\n{body}")).unwrap();
+    let secret = Action::new("read").with_path("config/.env.local");
+    assert_eq!(evaluate(&first, &secret).effect, Effect::Allow);
+    assert_eq!(evaluate(&overrides, &secret).effect, Effect::Deny);
 }
 
 #[test]

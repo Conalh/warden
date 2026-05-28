@@ -10,6 +10,7 @@ pub enum TokenKind {
     Ask,
     // Keywords
     Default,
+    Mode,
     Tool,
     When,
     // Logical operators
@@ -37,6 +38,7 @@ impl TokenKind {
             TokenKind::Deny => "`deny`".into(),
             TokenKind::Ask => "`ask`".into(),
             TokenKind::Default => "`default`".into(),
+            TokenKind::Mode => "`mode`".into(),
             TokenKind::Tool => "`tool`".into(),
             TokenKind::When => "`when`".into(),
             TokenKind::And => "`and`".into(),

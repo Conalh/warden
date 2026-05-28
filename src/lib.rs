@@ -34,7 +34,7 @@ mod parser;
 mod token;
 
 pub use analysis::{find_shadowed, Lint};
-pub use ast::{Effect, Expr, Field, Policy, Rule};
+pub use ast::{Effect, Expr, Field, Mode, Policy, Rule};
 pub use diagnostics::{render_all, Diagnostic, Span};
 pub use eval::{evaluate, Action, Verdict};
 

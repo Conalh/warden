@@ -169,6 +169,7 @@ impl<'a> Lexer<'a> {
             "deny" => TokenKind::Deny,
             "ask" => TokenKind::Ask,
             "default" => TokenKind::Default,
+            "mode" => TokenKind::Mode,
             "tool" => TokenKind::Tool,
             "when" => TokenKind::When,
             "and" => TokenKind::And,
@@ -207,6 +208,19 @@ mod tests {
                 TokenKind::Ident("path".into()),
                 TokenKind::Matches,
                 TokenKind::Str("src/**".into()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn lexes_mode_directive() {
+        let got = kinds("mode deny_overrides");
+        assert_eq!(
+            got,
+            vec![
+                TokenKind::Mode,
+                TokenKind::Ident("deny_overrides".into()),
                 TokenKind::Eof,
             ]
         );

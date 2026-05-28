@@ -33,6 +33,11 @@ impl Lint {
 }
 
 /// Return every unreachable rule, in source order.
+///
+/// This is a **first-match** notion of deadness: it assumes order is priority.
+/// It is *not* valid under [`Mode::DenyOverrides`](crate::Mode), where a later
+/// `deny` can override an earlier subsuming `allow` and so stays reachable —
+/// callers should only run this on `first_match` policies.
 pub fn find_shadowed(policy: &Policy) -> Vec<Lint> {
     let mut lints = Vec::new();
     for (j, later) in policy.rules.iter().enumerate() {

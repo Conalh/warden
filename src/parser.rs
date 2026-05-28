@@ -8,7 +8,7 @@
 //! diagnostic and resynchronize to the next rule boundary, so one run can
 //! surface every error in the file.
 
-use crate::ast::{Effect, Expr, Field, Policy, Rule};
+use crate::ast::{Effect, Expr, Field, Mode, Policy, Rule};
 use crate::diagnostics::{Diagnostic, Span};
 use crate::token::{Token, TokenKind};
 
@@ -31,13 +31,14 @@ struct Parser {
 impl Parser {
     fn parse_policy(&mut self) -> Policy {
         let mut default = Effect::Ask;
+        let mut mode = Mode::FirstMatch;
         let mut rules = Vec::new();
         while !self.at_end() {
             let before = self.pos;
-            let result = if *self.peek() == TokenKind::Default {
-                self.parse_default().map(|eff| default = eff)
-            } else {
-                self.parse_rule().map(|rule| rules.push(rule))
+            let result = match self.peek() {
+                TokenKind::Default => self.parse_default().map(|eff| default = eff),
+                TokenKind::Mode => self.parse_mode().map(|m| mode = m),
+                _ => self.parse_rule().map(|rule| rules.push(rule)),
             };
             if let Err(diag) = result {
                 self.diagnostics.push(diag);
@@ -48,13 +49,37 @@ impl Parser {
                 self.advance();
             }
         }
-        Policy { default, rules }
+        Policy { default, mode, rules }
     }
 
     fn parse_default(&mut self) -> Result<Effect, Diagnostic> {
         self.expect(TokenKind::Default)?;
         let (effect, _) = self.parse_effect()?;
         Ok(effect)
+    }
+
+    fn parse_mode(&mut self) -> Result<Mode, Diagnostic> {
+        self.expect(TokenKind::Mode)?;
+        let token = self.peek_token().clone();
+        if let TokenKind::Ident(name) = &token.kind {
+            self.advance();
+            Mode::from_ident(name).ok_or_else(|| {
+                Diagnostic::new(
+                    format!(
+                        "unknown mode `{name}` (expected `first_match` or `deny_overrides`)"
+                    ),
+                    token.span,
+                )
+            })
+        } else {
+            Err(Diagnostic::new(
+                format!(
+                    "expected a mode (`first_match` or `deny_overrides`), found {}",
+                    token.kind.describe()
+                ),
+                token.span,
+            ))
+        }
     }
 
     fn parse_rule(&mut self) -> Result<Rule, Diagnostic> {
@@ -225,7 +250,8 @@ impl Parser {
                 TokenKind::Allow
                 | TokenKind::Deny
                 | TokenKind::Ask
-                | TokenKind::Default => return,
+                | TokenKind::Default
+                | TokenKind::Mode => return,
                 _ => {
                     self.advance();
                 }
@@ -297,6 +323,32 @@ mod tests {
             Expr::And(lhs, _) => assert!(matches!(*lhs, Expr::Or(_, _))),
             other => panic!("expected top-level And, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn defaults_to_first_match_mode() {
+        let policy = parse(r#"allow tool("read")"#).unwrap();
+        assert_eq!(policy.mode, Mode::FirstMatch);
+    }
+
+    #[test]
+    fn parses_deny_overrides_mode() {
+        let policy = parse(
+            r#"
+            mode deny_overrides
+            allow tool("read")
+        "#,
+        )
+        .unwrap();
+        assert_eq!(policy.mode, Mode::DenyOverrides);
+        assert_eq!(policy.rules.len(), 1);
+    }
+
+    #[test]
+    fn rejects_unknown_mode() {
+        let err = parse(r#"mode deny_overide"#).unwrap_err();
+        assert_eq!(err.len(), 1);
+        assert!(err[0].message.contains("unknown mode"), "got: {}", err[0].message);
     }
 
     #[test]
