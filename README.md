@@ -53,7 +53,10 @@ ask   tool("write") when path matches "**/*.json" and not path matches "package.
 - **Predicates:** `<field> matches "<glob>"` and `<field> contains "<substring>"`,
   where `<field>` is `path` or `command`.
 - **Operators:** `not` (tightest) → `and` → `or` (loosest); parenthesize to override.
-- **Globs:** `*` (any run), `?` (one char). `#` starts a comment.
+- **Globs:** `/` is a segment boundary (gitignore-style): `*` matches a run
+  within one segment, `**` spans `/`, `?` is one non-`/` char. So `src/*`
+  matches `src/main.rs` but not `src/a/b.rs`, while `src/**` matches both.
+  `#` starts a comment.
 - **Combining mode (optional):** a top-level `mode first_match` (default) or
   `mode deny_overrides` directive — see below.
 
@@ -169,9 +172,10 @@ per precedence level — see [`src/parser.rs`](src/parser.rs).
   the verdict resolves `when <condition>` down to the leaf predicate that fired,
   with concrete values (`command "rm -rf /tmp" contains "rm -rf"`).
   **`deny`-overrides** — opt-in combining mode where the most restrictive
-  matching rule wins, order-independent.
-- **Next:** segment-aware `**` (not crossing `/`); richer glob subsumption in
-  the shadow analysis.
+  matching rule wins, order-independent. **Segment-aware globs** — `/` is a
+  hard boundary; `*` stays within a path segment while `**` spans them.
+- **Next:** richer glob subsumption in the shadow analysis (teach it the
+  segment-aware `*`/`**` distinction).
 - **Later:** a `wasm-bindgen` build powering an in-browser playground, and
   `cargo fuzz` on the parser.
 
