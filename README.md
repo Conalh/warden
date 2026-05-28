@@ -19,10 +19,10 @@ source ──▶ [lexer] ──▶ tokens ──▶ [parser] ──▶ AST (Poli
 # Validate a policy
 cargo run -- examples/agent.warden
 
-# Evaluate an action against it
+# Evaluate an action against it — the reason names the exact predicate that fired
 cargo run -- examples/agent.warden --tool bash --command "rm -rf /tmp"
 #   decision: DENY
-#   reason:   matched rule 5 (line 16): deny tool("bash") when <condition>
+#   reason:   matched rule 5 (line 16): deny tool("bash") because command "rm -rf /tmp" contains "rm -rf"
 
 cargo run -- examples/agent.warden --tool read --path src/main.rs
 #   decision: ALLOW

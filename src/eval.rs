@@ -59,7 +59,7 @@ pub fn evaluate(policy: &Policy, action: &Action) -> Verdict {
             return Verdict {
                 effect: rule.effect,
                 matched_rule: Some(index),
-                explanation: explain(index, rule),
+                explanation: explain(index, rule, action),
             };
         }
     }
@@ -84,16 +84,75 @@ fn eval_expr(expr: &Expr, action: &Action) -> bool {
     }
 }
 
-fn explain(index: usize, rule: &Rule) -> String {
-    let clause = if rule.condition.is_some() { " when <condition>" } else { "" };
+fn explain(index: usize, rule: &Rule, action: &Action) -> String {
+    let because = match &rule.condition {
+        Some(expr) => format!(" because {}", why_true(expr, action)),
+        None => String::new(),
+    };
     format!(
         "matched rule {} (line {}): {} tool(\"{}\"){}",
         index + 1,
         rule.span.line,
         rule.effect.as_str(),
         rule.tool,
-        clause
+        because
     )
+}
+
+fn show(action: &Action, field: Field) -> String {
+    action.field(field).map_or_else(|| "(unset)".to_string(), |v| format!("\"{v}\""))
+}
+
+/// Explain why a condition that evaluated **true** held, naming the deciding
+/// leaf predicates with the concrete values that satisfied them.
+fn why_true(expr: &Expr, action: &Action) -> String {
+    match expr {
+        Expr::And(lhs, rhs) => {
+            format!("{} and {}", why_true(lhs, action), why_true(rhs, action))
+        }
+        // Report the branch that actually carried the `or`.
+        Expr::Or(lhs, rhs) => {
+            if eval_expr(lhs, action) {
+                why_true(lhs, action)
+            } else {
+                why_true(rhs, action)
+            }
+        }
+        // A satisfied `not P` simply means P did not hold; state that directly
+        // rather than wrapping a double negative.
+        Expr::Not(inner) => why_false(inner, action),
+        Expr::Match { field, pattern, .. } => {
+            format!("{} {} matches \"{}\"", field.as_str(), show(action, *field), pattern)
+        }
+        Expr::Contains { field, needle, .. } => {
+            format!("{} {} contains \"{}\"", field.as_str(), show(action, *field), needle)
+        }
+    }
+}
+
+/// Mirror of [`why_true`] for a condition that evaluated **false**, used to
+/// explain the negated branch under a `not`.
+fn why_false(expr: &Expr, action: &Action) -> String {
+    match expr {
+        // An `and` is false because at least one side is; report a false one.
+        Expr::And(lhs, rhs) => {
+            if !eval_expr(lhs, action) {
+                why_false(lhs, action)
+            } else {
+                why_false(rhs, action)
+            }
+        }
+        Expr::Or(lhs, rhs) => {
+            format!("{} and {}", why_false(lhs, action), why_false(rhs, action))
+        }
+        Expr::Not(inner) => why_true(inner, action),
+        Expr::Match { field, pattern, .. } => {
+            format!("{} {} does not match \"{}\"", field.as_str(), show(action, *field), pattern)
+        }
+        Expr::Contains { field, needle, .. } => {
+            format!("{} {} does not contain \"{}\"", field.as_str(), show(action, *field), needle)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -151,5 +210,37 @@ mod tests {
 
         let other = Action::new("write").with_path("tsconfig.json");
         assert_eq!(evaluate(&p, &other).effect, Effect::Ask);
+    }
+
+    #[test]
+    fn trace_names_the_deciding_predicate() {
+        let p = policy(r#"deny tool("bash") when command contains "rm -rf""#);
+        let v = evaluate(&p, &Action::new("bash").with_command("rm -rf /tmp"));
+        assert!(
+            v.explanation.contains(r#"command "rm -rf /tmp" contains "rm -rf""#),
+            "got: {}",
+            v.explanation
+        );
+    }
+
+    #[test]
+    fn trace_reports_the_firing_or_branch() {
+        let p = policy(
+            r#"deny tool("bash") when command contains "mkfs" or command contains "rm -rf""#,
+        );
+        let v = evaluate(&p, &Action::new("bash").with_command("sudo rm -rf /"));
+        assert!(v.explanation.contains(r#"contains "rm -rf""#), "got: {}", v.explanation);
+        assert!(!v.explanation.contains("mkfs"), "got: {}", v.explanation);
+    }
+
+    #[test]
+    fn trace_explains_negation() {
+        let p = policy(r#"ask tool("write") when not path matches "package.json""#);
+        let v = evaluate(&p, &Action::new("write").with_path("tsconfig.json"));
+        assert!(
+            v.explanation.contains(r#"path "tsconfig.json" does not match "package.json""#),
+            "got: {}",
+            v.explanation
+        );
     }
 }
