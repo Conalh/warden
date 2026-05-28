@@ -1,0 +1,21 @@
+# Example policy for a coding agent.
+# Rules are evaluated top to bottom; the first match wins.
+# If nothing matches, the `default` applies.
+
+default ask
+
+# Reading source is fine; reading secrets is not.
+allow tool("read")  when path matches "src/**"
+deny  tool("read")  when path matches "**/.env*"
+deny  tool("read")  when path matches "**/*.pem"
+
+# Never let any tool touch a secret file.
+deny  tool("*")     when path matches "**/.env*" or path matches "**/id_rsa*"
+
+# Shell: block the obviously destructive, green-light the obviously safe.
+deny  tool("bash")  when command contains "rm -rf" or command contains "mkfs"
+allow tool("bash")  when command matches "git status*" or command matches "npm test*"
+
+# Writing config is sensitive enough to confirm, except package.json churn.
+ask   tool("write") when path matches "**/*.json" and not path matches "package.json"
+allow tool("write") when path matches "src/**"

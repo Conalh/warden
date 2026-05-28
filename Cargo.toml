@@ -1,0 +1,19 @@
+[package]
+name = "warden"
+version = "0.1.0"
+edition = "2024"
+description = "A from-scratch policy DSL engine that decides whether an agent action is allowed, denied, or requires confirmation."
+license = "MIT"
+repository = "https://github.com/ConalH/warden"
+keywords = ["policy", "dsl", "interpreter", "parser", "agent"]
+categories = ["parser-implementations", "command-line-utilities"]
+
+[dependencies]
+
+[lib]
+name = "warden"
+path = "src/lib.rs"
+
+[[bin]]
+name = "warden"
+path = "src/bin/warden.rs"
