@@ -27,6 +27,7 @@ pub mod analysis;
 pub mod ast;
 pub mod diagnostics;
 pub mod eval;
+pub mod json;
 pub mod selftest;
 
 mod lexer;
@@ -38,6 +39,7 @@ pub use analysis::{Lint, find_shadowed};
 pub use ast::{Effect, Expr, Field, Mode, Policy, Rule, Test};
 pub use diagnostics::{Diagnostic, Span, render_all};
 pub use eval::{Action, Verdict, evaluate};
+pub use json::Json;
 pub use selftest::{TestOutcome, run_tests};
 
 use lexer::Lexer;

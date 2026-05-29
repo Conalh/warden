@@ -209,3 +209,66 @@ fn shadowed_example_flags_dead_rules() {
         .collect();
     assert_eq!(dead, vec![1, 3, 5, 7]);
 }
+
+/// Run the compiled `warden` binary and return its stdout and exit code. Cargo
+/// builds the binary before this test and hands us its path via the env var.
+fn cli(args: &[&str]) -> (String, i32) {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_warden"))
+        .args(args)
+        .output()
+        .expect("failed to run the warden binary");
+    (
+        String::from_utf8(output.stdout).expect("stdout should be utf-8"),
+        output.status.code().expect("process should return a code"),
+    )
+}
+
+#[test]
+fn json_decide_emits_verdict_with_deny_exit() {
+    let (stdout, code) = cli(&[
+        "examples/agent.warden",
+        "--tool",
+        "bash",
+        "--command",
+        "rm -rf /tmp",
+        "--json",
+    ]);
+    assert_eq!(code, 1, "a denied action still exits 1 under --json");
+    assert!(stdout.contains(r#""effect":"deny""#), "got: {stdout}");
+    assert!(stdout.contains(r#""rule":5"#), "got: {stdout}");
+}
+
+#[test]
+fn json_validate_reports_ok_status_and_tests() {
+    let (stdout, code) = cli(&["examples/tested.warden", "--json"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains(r#""status":"ok""#), "got: {stdout}");
+    assert!(stdout.contains(r#""passed":true"#), "got: {stdout}");
+    assert!(stdout.contains(r#""tests":[{"#), "got: {stdout}");
+}
+
+#[test]
+fn json_validate_flags_unreachable_with_warning_status() {
+    let (stdout, code) = cli(&["examples/shadowed.warden", "--json"]);
+    assert_eq!(code, 3, "unreachable rules still exit 3 under --json");
+    assert!(stdout.contains(r#""status":"warning""#), "got: {stdout}");
+    assert!(
+        stdout.contains(r#""unreachable":[{"rule":2,"coveredBy":1"#),
+        "got: {stdout}"
+    );
+}
+
+#[test]
+fn json_parse_error_is_structured_and_exits_2() {
+    let mut path = std::env::temp_dir();
+    path.push("warden_cli_parse_error.warden");
+    std::fs::write(&path, r#"allow tool("read") when paht matches "x""#).unwrap();
+
+    let (stdout, code) = cli(&[path.to_str().unwrap(), "--json"]);
+    assert_eq!(code, 2);
+    assert!(stdout.contains(r#""status":"error""#), "got: {stdout}");
+    assert!(stdout.contains(r#""errors":[{"#), "got: {stdout}");
+    assert!(stdout.contains("unknown field"), "got: {stdout}");
+
+    std::fs::remove_file(&path).ok();
+}

@@ -203,6 +203,26 @@ the reason the engine reached the verdict it did. See
 [`examples/tested.warden`](examples/tested.warden) and
 [`src/selftest.rs`](src/selftest.rs).
 
+## Structured output (`--json`)
+
+Pass `--json` and `warden` swaps its human-readable output for a single JSON
+object on stdout (and nothing on stderr), so it slots into a CI step or an
+agent's tool-use loop without scraping text. The exit code is identical to the
+default mode, so a shell guard can still branch on it.
+
+```sh
+$ warden examples/agent.warden --tool bash --command "rm -rf /tmp" --json
+{"effect":"deny","rule":5,"reason":"matched rule 5 (line 16): deny tool(\"bash\") because command \"rm -rf /tmp\" contains \"rm -rf\""}
+
+$ warden examples/tested.warden --json | jq '{status, passed: [.tests[].passed]}'
+{ "status": "ok", "passed": [true, true, true, true, true] }
+```
+
+Validation reports `{rules, default, mode, status, unreachable, tests}`; a parse
+failure reports `{status: "error", errors}` with the line and column of each
+diagnostic. The JSON is hand-rolled in [`src/json.rs`](src/json.rs) — no `serde`,
+so the core crate stays zero-dependency.
+
 ## Grammar (EBNF)
 
 ```ebnf
@@ -239,6 +259,7 @@ per precedence level — see [`src/parser.rs`](src/parser.rs).
 | [`eval.rs`](src/eval.rs) | Tree-walking evaluator, first-match resolution |
 | [`selftest.rs`](src/selftest.rs) | Runs inline `test` expectations against the policy |
 | [`analysis.rs`](src/analysis.rs) | Static detection of unreachable (shadowed) rules |
+| [`json.rs`](src/json.rs) | Minimal zero-dep JSON writer for `--json` output |
 | [`matcher.rs`](src/matcher.rs) | Backtracking glob matcher |
 | [`diagnostics.rs`](src/diagnostics.rs) | Spans + rustc-style caret rendering |
 
@@ -276,10 +297,12 @@ per precedence level — see [`src/parser.rs`](src/parser.rs).
   glue isolated in a detached crate so the core stays zero-dependency (see
   above). **Inline self-tests** — `test` statements that assert a concrete
   action's verdict, checked at validate time so a policy guards its own
-  behavior (see above).
-- **Next:** open — a natural direction is a structured (`--json`) output mode
-  for the verdict and the validation report, so `warden` slots into a CI step
-  or an agent's tool-use loop without scraping human-readable text.
+  behavior (see above). **Structured output** — a `--json` mode for the verdict
+  and the validation report, emitted from a hand-rolled zero-dep JSON writer, so
+  `warden` slots into a CI step or an agent's tool-use loop (see above).
+- **Next:** open — a natural direction is reading the action from stdin (or a
+  batch of actions) so a long-lived agent can stream decisions through a single
+  `warden` process instead of paying process-spawn cost per check.
 
 ## Tests
 
