@@ -329,9 +329,11 @@ per precedence level — see [`src/parser.rs`](src/parser.rs).
   streams one JSON verdict per line, so a long-lived agent checks many actions
   through a single process; it reuses the JSON module's total, depth-guarded
   parser (see above).
-- **Next:** open — a natural direction is letting a policy `include` another
-  file, so shared baseline rules (a company-wide secrets denylist, say) can live
-  in one place and be composed into per-project policies.
+- **Possible next step:** a policy `include` directive, so shared baseline rules
+  (a company-wide secrets denylist, say) live in one file and compose into
+  per-project policies. Left unbuilt on purpose: it trades the engine's pure,
+  no-I/O core for file resolution, cycle detection, and a read-access surface
+  that deserves its own design pass before it earns a place here.
 
 ## Tests
 
