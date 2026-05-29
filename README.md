@@ -29,7 +29,8 @@ cargo run -- examples/agent.warden --tool read --path src/main.rs
 ```
 
 Exit codes: `0` allow/ask · `1` deny · `2` parse error · `3` unreachable rules ·
-`64` usage error — so `warden` drops straight into a shell guard or CI check.
+`4` self-test failed · `64` usage error — so `warden` drops straight into a
+shell guard or CI check.
 
 ## Playground
 
@@ -161,14 +162,57 @@ that only emerges from the *union* of several earlier rules. In a linter, a
 false "this rule is dead" is far worse than a missed one. See
 [`src/analysis.rs`](src/analysis.rs).
 
+## Self-tests
+
+A policy can carry its own expectations. A `test` statement names a concrete
+action and the verdict it must reach; validating the policy (no action) runs
+every test and fails with exit `4` if any expectation is broken — so a policy
+guards itself against a careless edit, the way a unit test guards a function.
+
+```warden
+default ask
+
+deny  tool("read")  when path matches "**/.env*"
+allow tool("read")  when path matches "src/**"
+deny  tool("bash")  when command contains "rm -rf"
+allow tool("bash")  when command matches "git *"
+
+test deny  tool("read")  path "config/.env.local"
+test allow tool("read")  path "src/main.rs"
+test deny  tool("bash")  command "rm -rf /tmp"
+test allow tool("bash")  command "git status"
+test ask   tool("write") path "notes.txt"        # nothing matches -> default ask
+```
+
+```text
+$ warden examples/tested.warden
+4 rule(s), default `ask`, mode `first_match`
+policy ok: no unreachable rules.
+  ok   test 1: tool("read") path "config/.env.local" => deny
+  ok   test 2: tool("read") path "src/main.rs" => allow
+  ok   test 3: tool("bash") command "rm -rf /tmp" => deny
+  ok   test 4: tool("bash") command "git status" => allow
+  ok   test 5: tool("write") path "notes.txt" => ask
+5 self-test(s): 5 passed, 0 failed.
+```
+
+Tests run under whichever combining `mode` the policy declares, so the
+expectation reflects the same resolution the engine uses in production. A
+failing test prints the offending action, the expected and actual verdicts, and
+the reason the engine reached the verdict it did. See
+[`examples/tested.warden`](examples/tested.warden) and
+[`src/selftest.rs`](src/selftest.rs).
+
 ## Grammar (EBNF)
 
 ```ebnf
 policy      = { statement } ;
-statement   = mode | default | rule ;
+statement   = mode | default | rule | test ;
 mode        = "mode" , ( "first_match" | "deny_overrides" ) ;
 default     = "default" , effect ;
 rule        = effect , "tool" , "(" , string , ")" , [ "when" , expr ] ;
+test        = "test" , effect , "tool" , "(" , string , ")" , { action_attr } ;
+action_attr = ( "path" | "command" ) , string ;
 effect      = "allow" | "deny" | "ask" ;
 
 expr        = or_expr ;
@@ -193,6 +237,7 @@ per precedence level — see [`src/parser.rs`](src/parser.rs).
 | [`ast.rs`](src/ast.rs) | `Policy` / `Rule` / `Expr` — the recursive tree |
 | [`parser.rs`](src/parser.rs) | Recursive descent + Pratt; error recovery |
 | [`eval.rs`](src/eval.rs) | Tree-walking evaluator, first-match resolution |
+| [`selftest.rs`](src/selftest.rs) | Runs inline `test` expectations against the policy |
 | [`analysis.rs`](src/analysis.rs) | Static detection of unreachable (shadowed) rules |
 | [`matcher.rs`](src/matcher.rs) | Backtracking glob matcher |
 | [`diagnostics.rs`](src/diagnostics.rs) | Spans + rustc-style caret rendering |
@@ -229,9 +274,12 @@ per precedence level — see [`src/parser.rs`](src/parser.rs).
   and a depth guard that make the parser provably total (see below).
   **In-browser playground** — a `wasm-bindgen` build of the engine, with the
   glue isolated in a detached crate so the core stays zero-dependency (see
-  above).
-- **Next:** open — a natural direction is inline *test blocks* (expected
-  verdicts checked at validate time) so a policy can assert its own behavior.
+  above). **Inline self-tests** — `test` statements that assert a concrete
+  action's verdict, checked at validate time so a policy guards its own
+  behavior (see above).
+- **Next:** open — a natural direction is a structured (`--json`) output mode
+  for the verdict and the validation report, so `warden` slots into a CI step
+  or an agent's tool-use loop without scraping human-readable text.
 
 ## Tests
 

@@ -8,7 +8,7 @@
 //! diagnostic and resynchronize to the next rule boundary, so one run can
 //! surface every error in the file.
 
-use crate::ast::{Effect, Expr, Field, Mode, Policy, Rule};
+use crate::ast::{Effect, Expr, Field, Mode, Policy, Rule, Test};
 use crate::diagnostics::{Diagnostic, Span};
 use crate::token::{Token, TokenKind};
 
@@ -42,11 +42,13 @@ impl Parser {
         let mut default = Effect::Ask;
         let mut mode = Mode::FirstMatch;
         let mut rules = Vec::new();
+        let mut tests = Vec::new();
         while !self.at_end() {
             let before = self.pos;
             let result = match self.peek() {
                 TokenKind::Default => self.parse_default().map(|eff| default = eff),
                 TokenKind::Mode => self.parse_mode().map(|m| mode = m),
+                TokenKind::Test => self.parse_test().map(|test| tests.push(test)),
                 _ => self.parse_rule().map(|rule| rules.push(rule)),
             };
             if let Err(diag) = result {
@@ -62,6 +64,7 @@ impl Parser {
             default,
             mode,
             rules,
+            tests,
         }
     }
 
@@ -109,6 +112,52 @@ impl Parser {
             effect,
             tool,
             condition,
+            span: start,
+        })
+    }
+
+    /// `test <effect> tool("<name>") [path "<p>"] [command "<c>"]` — a concrete
+    /// action plus the verdict the author expects it to reach.
+    fn parse_test(&mut self) -> Result<Test, Diagnostic> {
+        let start = self.expect(TokenKind::Test)?.span;
+        let (expected, _) = self.parse_effect()?;
+        self.expect(TokenKind::Tool)?;
+        self.expect(TokenKind::LParen)?;
+        let tool = self.expect_string()?;
+        self.expect(TokenKind::RParen)?;
+
+        let mut path = None;
+        let mut command = None;
+        // Zero or more `path "..."` / `command "..."` attributes, each at most once.
+        while let TokenKind::Ident(name) = self.peek() {
+            let name = name.clone();
+            let attr_span = self.peek_token().span;
+            let slot = match Field::from_ident(&name) {
+                Some(Field::Path) => &mut path,
+                Some(Field::Command) => &mut command,
+                None => {
+                    return Err(Diagnostic::new(
+                        format!("unknown test attribute `{name}` (expected `path` or `command`)"),
+                        attr_span,
+                    ));
+                }
+            };
+            self.advance();
+            let value = self.expect_string()?;
+            if slot.is_some() {
+                return Err(Diagnostic::new(
+                    format!("duplicate `{name}` in test"),
+                    attr_span,
+                ));
+            }
+            *slot = Some(value);
+        }
+
+        Ok(Test {
+            expected,
+            tool,
+            path,
+            command,
             span: start,
         })
     }
@@ -298,7 +347,8 @@ impl Parser {
                 | TokenKind::Deny
                 | TokenKind::Ask
                 | TokenKind::Default
-                | TokenKind::Mode => return,
+                | TokenKind::Mode
+                | TokenKind::Test => return,
                 _ => {
                     self.advance();
                 }
@@ -426,6 +476,50 @@ mod tests {
                 "expected a depth diagnostic, got: {err:?}"
             );
         }
+    }
+
+    #[test]
+    fn parses_test_with_action_attributes() {
+        let policy = parse(
+            r#"
+            allow tool("read")
+            test deny  tool("bash") command "rm -rf /tmp"
+            test allow tool("read") path "src/main.rs"
+            test ask   tool("write")
+        "#,
+        )
+        .unwrap();
+        assert_eq!(policy.rules.len(), 1);
+        assert_eq!(policy.tests.len(), 3);
+
+        assert_eq!(policy.tests[0].expected, Effect::Deny);
+        assert_eq!(policy.tests[0].tool, "bash");
+        assert_eq!(policy.tests[0].command.as_deref(), Some("rm -rf /tmp"));
+        assert_eq!(policy.tests[0].path, None);
+
+        assert_eq!(policy.tests[1].path.as_deref(), Some("src/main.rs"));
+        assert_eq!(policy.tests[2].path, None);
+        assert_eq!(policy.tests[2].command, None);
+    }
+
+    #[test]
+    fn rejects_unknown_test_attribute() {
+        let err = parse(r#"test allow tool("read") paht "x""#).unwrap_err();
+        assert_eq!(err.len(), 1);
+        assert!(
+            err[0].message.contains("unknown test attribute"),
+            "got: {}",
+            err[0].message
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_test_attribute() {
+        let err = parse(r#"test allow tool("read") path "a" path "b""#).unwrap_err();
+        assert!(
+            err.iter().any(|d| d.message.contains("duplicate `path`")),
+            "got: {err:?}"
+        );
     }
 
     #[test]

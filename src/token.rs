@@ -13,6 +13,7 @@ pub enum TokenKind {
     Mode,
     Tool,
     When,
+    Test,
     // Logical operators
     And,
     Or,
@@ -41,6 +42,7 @@ impl TokenKind {
             TokenKind::Mode => "`mode`".into(),
             TokenKind::Tool => "`tool`".into(),
             TokenKind::When => "`when`".into(),
+            TokenKind::Test => "`test`".into(),
             TokenKind::And => "`and`".into(),
             TokenKind::Or => "`or`".into(),
             TokenKind::Not => "`not`".into(),

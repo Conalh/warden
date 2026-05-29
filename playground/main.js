@@ -61,6 +61,27 @@ deny  tool("read")  when path matches "**/*.pem"
 
 ask   tool("write") when path matches "**/*.json"
 `,
+
+  tested: `# A policy that ships with its own self-tests.
+# Each \`test\` names a concrete action and the verdict it must reach;
+# validation runs them all. Break a rule and a test turns red below.
+
+default ask
+
+# Reading source is fine; reading secrets is not.
+deny  tool("read")  when path matches "**/.env*"
+allow tool("read")  when path matches "src/**"
+
+# Shell: block the obviously destructive, green-light the obviously safe.
+deny  tool("bash")  when command contains "rm -rf"
+allow tool("bash")  when command matches "git *"
+
+test deny  tool("read")  path "config/.env.local"
+test allow tool("read")  path "src/main.rs"
+test deny  tool("bash")  command "rm -rf /tmp"
+test allow tool("bash")  command "git status"
+test ask   tool("write") path "notes.txt"
+`,
 };
 
 const el = (id) => document.getElementById(id);

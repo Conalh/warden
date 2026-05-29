@@ -27,6 +27,7 @@ pub mod analysis;
 pub mod ast;
 pub mod diagnostics;
 pub mod eval;
+pub mod selftest;
 
 mod lexer;
 mod matcher;
@@ -34,9 +35,10 @@ mod parser;
 mod token;
 
 pub use analysis::{Lint, find_shadowed};
-pub use ast::{Effect, Expr, Field, Mode, Policy, Rule};
+pub use ast::{Effect, Expr, Field, Mode, Policy, Rule, Test};
 pub use diagnostics::{Diagnostic, Span, render_all};
 pub use eval::{Action, Verdict, evaluate};
+pub use selftest::{TestOutcome, run_tests};
 
 use lexer::Lexer;
 

@@ -6,8 +6,8 @@
 //! a thin wrapper over warden's public API, returning small structs that
 //! wasm-bindgen turns into plain JS objects with string getters (no `serde`).
 
-use wasm_bindgen::prelude::*;
 use warden::{Action, Mode};
+use wasm_bindgen::prelude::*;
 
 enum Status {
     Ok,
@@ -26,8 +26,8 @@ impl Status {
 }
 
 /// The result of validating a policy, mirroring what the CLI prints when run
-/// with no action: a one-line summary, then parse errors (with carets) or
-/// unreachable-rule warnings.
+/// with no action: a one-line summary, then parse errors (with carets),
+/// unreachable-rule warnings, and any inline self-test results.
 #[wasm_bindgen]
 pub struct Report {
     status: Status,
@@ -36,7 +36,8 @@ pub struct Report {
 
 #[wasm_bindgen]
 impl Report {
-    /// `"ok"`, `"warning"` (unreachable rules found), or `"error"` (parse failed).
+    /// `"ok"`, `"warning"` (unreachable rules found), or `"error"` (parse failed
+    /// or a self-test failed).
     #[wasm_bindgen(getter)]
     pub fn status(&self) -> String {
         self.status.as_str().to_string()
@@ -60,7 +61,10 @@ pub fn validate(source: &str) -> Report {
                 warden::render_all(source, &diagnostics),
                 diagnostics.len()
             );
-            return Report { status: Status::Error, text };
+            return Report {
+                status: Status::Error,
+                text,
+            };
         }
     };
 
@@ -71,26 +75,66 @@ pub fn validate(source: &str) -> Report {
         policy.mode.as_str()
     );
 
+    // A failed self-test (error) outranks an unreachable-rule warning, which
+    // outranks a clean bill of health — same precedence as the CLI's exit code.
+    let mut status = Status::Ok;
+
     // The unreachable-rule lint is a first-match notion; under deny-overrides a
     // later `deny` can still win, so we skip it — same as the CLI.
-    if policy.mode != Mode::FirstMatch {
+    if policy.mode == Mode::FirstMatch {
+        let lints = warden::find_shadowed(&policy);
+        if lints.is_empty() {
+            text.push_str("\npolicy ok: no unreachable rules.");
+        } else {
+            for lint in &lints {
+                text.push_str("\n\n");
+                text.push_str(&lint.to_diagnostic().render_labeled(source, "warning"));
+            }
+            text.push_str(&format!("\n\n{} unreachable rule(s) found.", lints.len()));
+            status = Status::Warning;
+        }
+    } else {
         text.push_str(
             "\npolicy ok: unreachable-rule analysis applies to `first_match` only; skipped.",
         );
-        return Report { status: Status::Ok, text };
     }
 
-    let lints = warden::find_shadowed(&policy);
-    if lints.is_empty() {
-        text.push_str("\npolicy ok: no unreachable rules.");
-        return Report { status: Status::Ok, text };
+    // Self-tests run in every mode — a deny_overrides policy benefits just as much.
+    let outcomes = warden::run_tests(&policy);
+    if !outcomes.is_empty() {
+        text.push('\n');
+        for outcome in &outcomes {
+            if outcome.passed {
+                text.push_str(&format!(
+                    "\n  ok   test {}: {} => {}",
+                    outcome.number,
+                    outcome.action,
+                    outcome.actual.as_str()
+                ));
+            } else {
+                text.push_str(&format!(
+                    "\n  FAIL test {}: {} => expected {}, got {}\n         reason: {}",
+                    outcome.number,
+                    outcome.action,
+                    outcome.expected.as_str(),
+                    outcome.actual.as_str(),
+                    outcome.explanation
+                ));
+            }
+        }
+        let failed = outcomes.iter().filter(|o| !o.passed).count();
+        text.push_str(&format!(
+            "\n{} self-test(s): {} passed, {} failed.",
+            outcomes.len(),
+            outcomes.len() - failed,
+            failed
+        ));
+        if failed > 0 {
+            status = Status::Error;
+        }
     }
-    for lint in &lints {
-        text.push_str("\n\n");
-        text.push_str(&lint.to_diagnostic().render_labeled(source, "warning"));
-    }
-    text.push_str(&format!("\n\n{} unreachable rule(s) found.", lints.len()));
-    Report { status: Status::Warning, text }
+
+    Report { status, text }
 }
 
 /// The result of evaluating one action against the policy.

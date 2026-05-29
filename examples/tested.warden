@@ -1,0 +1,22 @@
+# A policy that ships with its own self-tests.
+#
+# Run `warden examples/tested.warden` (no action) and warden checks every
+# `test` below against the rules. Edit a rule so it breaks one of these
+# expectations and validation fails with exit code 4 — the policy guards itself.
+
+default ask
+
+# Reading source is fine; reading secrets is not.
+deny  tool("read")  when path matches "**/.env*"
+allow tool("read")  when path matches "src/**"
+
+# Shell: block the obviously destructive, green-light the obviously safe.
+deny  tool("bash")  when command contains "rm -rf"
+allow tool("bash")  when command matches "git *"
+
+# Expectations: each names a concrete action and the verdict it must reach.
+test deny  tool("read")  path "config/.env.local"
+test allow tool("read")  path "src/main.rs"
+test deny  tool("bash")  command "rm -rf /tmp"
+test allow tool("bash")  command "git status"
+test ask   tool("write") path "notes.txt"        # nothing matches -> default ask

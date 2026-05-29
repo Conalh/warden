@@ -183,6 +183,7 @@ impl<'a> Lexer<'a> {
             "mode" => TokenKind::Mode,
             "tool" => TokenKind::Tool,
             "when" => TokenKind::When,
+            "test" => TokenKind::Test,
             "and" => TokenKind::And,
             "or" => TokenKind::Or,
             "not" => TokenKind::Not,
@@ -232,6 +233,25 @@ mod tests {
             vec![
                 TokenKind::Mode,
                 TokenKind::Ident("deny_overrides".into()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn lexes_a_test_statement() {
+        let got = kinds(r#"test deny tool("bash") command "rm -rf /""#);
+        assert_eq!(
+            got,
+            vec![
+                TokenKind::Test,
+                TokenKind::Deny,
+                TokenKind::Tool,
+                TokenKind::LParen,
+                TokenKind::Str("bash".into()),
+                TokenKind::RParen,
+                TokenKind::Ident("command".into()),
+                TokenKind::Str("rm -rf /".into()),
                 TokenKind::Eof,
             ]
         );

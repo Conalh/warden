@@ -4,11 +4,12 @@
 //!   warden <policy-file>                              validate the policy
 //!   warden <policy-file> --tool <name> [--path P] [--command C]
 //!
-//! Exit codes: 0 allow/ask, 1 deny, 2 parse error, 3 unreachable rules, 64 usage error.
+//! Exit codes: 0 allow/ask, 1 deny, 2 parse error, 3 unreachable rules,
+//! 4 self-test failed, 64 usage error.
 
 use std::process::ExitCode;
 
-use warden::{Action, Effect, Mode};
+use warden::{Action, Effect, Mode, Policy, TestOutcome};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -56,33 +57,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     };
 
     let Some(tool) = tool else {
-        println!(
-            "{} rule(s), default `{}`, mode `{}`",
-            policy.rules.len(),
-            policy.default.as_str(),
-            policy.mode.as_str()
-        );
-        // Unreachable-rule analysis is a first-match notion; under
-        // deny-overrides a later `deny` can still win, so we don't run it.
-        if policy.mode != Mode::FirstMatch {
-            println!(
-                "policy ok: unreachable-rule analysis applies to `first_match` only; skipped."
-            );
-            return Ok(ExitCode::SUCCESS);
-        }
-        let lints = warden::find_shadowed(&policy);
-        if lints.is_empty() {
-            println!("policy ok: no unreachable rules.");
-            return Ok(ExitCode::SUCCESS);
-        }
-        for lint in &lints {
-            eprintln!(
-                "{}\n",
-                lint.to_diagnostic().render_labeled(&source, "warning")
-            );
-        }
-        eprintln!("{} unreachable rule(s) found.", lints.len());
-        return Ok(ExitCode::from(3));
+        return Ok(validate(&policy, &source));
     };
 
     let mut action = Action::new(tool);
@@ -103,6 +78,81 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     })
 }
 
+/// Validate mode (no action given): print the summary, run the unreachable-rule
+/// lint (first-match policies only) and any inline self-tests, then return the
+/// most serious exit code — `4` if a self-test failed, else `3` for unreachable
+/// rules, else `0`.
+fn validate(policy: &Policy, source: &str) -> ExitCode {
+    println!(
+        "{} rule(s), default `{}`, mode `{}`",
+        policy.rules.len(),
+        policy.default.as_str(),
+        policy.mode.as_str()
+    );
+
+    let mut exit = 0u8;
+
+    // Unreachable-rule analysis is a first-match notion; under deny-overrides a
+    // later `deny` can still win, so we don't run it.
+    if policy.mode == Mode::FirstMatch {
+        let lints = warden::find_shadowed(policy);
+        if lints.is_empty() {
+            println!("policy ok: no unreachable rules.");
+        } else {
+            for lint in &lints {
+                eprintln!(
+                    "{}\n",
+                    lint.to_diagnostic().render_labeled(source, "warning")
+                );
+            }
+            eprintln!("{} unreachable rule(s) found.", lints.len());
+            exit = 3;
+        }
+    } else {
+        println!("policy ok: unreachable-rule analysis applies to `first_match` only; skipped.");
+    }
+
+    // Self-tests run in every mode — a deny_overrides policy benefits just as much.
+    if !policy.tests.is_empty() && report_tests(&warden::run_tests(policy)) > 0 {
+        // A broken behavioral expectation outranks a dead rule.
+        exit = 4;
+    }
+
+    ExitCode::from(exit)
+}
+
+/// Print one line per inline self-test (with a reason for each failure) plus a
+/// summary; return how many failed.
+fn report_tests(outcomes: &[TestOutcome]) -> usize {
+    for outcome in outcomes {
+        if outcome.passed {
+            println!(
+                "  ok   test {}: {} => {}",
+                outcome.number,
+                outcome.action,
+                outcome.actual.as_str()
+            );
+        } else {
+            println!(
+                "  FAIL test {}: {} => expected {}, got {}",
+                outcome.number,
+                outcome.action,
+                outcome.expected.as_str(),
+                outcome.actual.as_str()
+            );
+            println!("         reason: {}", outcome.explanation);
+        }
+    }
+    let failed = outcomes.iter().filter(|o| !o.passed).count();
+    println!(
+        "{} self-test(s): {} passed, {} failed.",
+        outcomes.len(),
+        outcomes.len() - failed,
+        failed
+    );
+    failed
+}
+
 fn take_value(args: &[String], i: &mut usize) -> Result<String, String> {
     *i += 1;
     args.get(*i)
@@ -121,6 +171,6 @@ fn print_usage() {
          \x20 warden policy.warden --tool bash --command \"rm -rf /\"\n\
          \x20 warden policy.warden --tool read --path src/main.rs\n\n\
          EXIT CODES:\n\
-         \x20 0  allow/ask   1  deny   2  parse error   3  unreachable rules   64  usage error"
+         \x20 0  allow/ask   1  deny   2  parse error   3  unreachable rules   4  self-test failed   64  usage error"
     );
 }

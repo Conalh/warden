@@ -6,6 +6,7 @@ use warden::{Action, Effect, Mode, evaluate, parse};
 const EXAMPLE: &str = include_str!("../examples/agent.warden");
 const SHADOWED: &str = include_str!("../examples/shadowed.warden");
 const DENY_OVERRIDES: &str = include_str!("../examples/deny_overrides.warden");
+const TESTED: &str = include_str!("../examples/tested.warden");
 
 fn decide(policy_src: &str, action: Action) -> Effect {
     let policy = parse(policy_src).expect("policy should parse");
@@ -163,6 +164,40 @@ fn same_rules_differ_by_mode() {
     let secret = Action::new("read").with_path("config/.env.local");
     assert_eq!(evaluate(&first, &secret).effect, Effect::Allow);
     assert_eq!(evaluate(&overrides, &secret).effect, Effect::Deny);
+}
+
+#[test]
+fn tested_example_passes_its_own_self_tests() {
+    let policy = parse(TESTED).expect("tested example must parse");
+    let outcomes = warden::run_tests(&policy);
+    assert!(
+        !outcomes.is_empty(),
+        "the example should declare self-tests"
+    );
+    assert!(
+        outcomes.iter().all(|o| o.passed),
+        "shipped self-tests must pass: {:?}",
+        outcomes
+            .iter()
+            .filter(|o| !o.passed)
+            .map(|o| &o.action)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_broken_expectation_is_caught() {
+    // Same rules, but a test now claims `allow` for a denied command.
+    let src = r#"
+        deny tool("bash") when command contains "rm -rf"
+        test allow tool("bash") command "rm -rf /"
+    "#;
+    let policy = parse(src).unwrap();
+    let outcomes = warden::run_tests(&policy);
+    assert_eq!(outcomes.len(), 1);
+    assert!(!outcomes[0].passed);
+    assert_eq!(outcomes[0].expected, Effect::Allow);
+    assert_eq!(outcomes[0].actual, Effect::Deny);
 }
 
 #[test]

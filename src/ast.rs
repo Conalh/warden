@@ -108,11 +108,42 @@ pub struct Rule {
     pub span: Span,
 }
 
-/// A whole policy file: an ordered list of rules, the fallback effect, and the
-/// combining [`Mode`] that decides how matching rules resolve to a verdict.
+/// An inline self-test: a concrete action and the verdict the author expects
+/// the policy to reach for it. Checked at validate time, so a policy can assert
+/// its own behavior and catch a regression the moment a rule changes.
+///
+/// `test <effect> tool("<name>") [path "<p>"] [command "<c>"]`
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Test {
+    pub expected: Effect,
+    pub tool: String,
+    pub path: Option<String>,
+    pub command: Option<String>,
+    pub span: Span,
+}
+
+impl Test {
+    /// One-line rendering of the action under test, e.g.
+    /// `tool("bash") command "rm -rf /tmp"`.
+    pub fn describe(&self) -> String {
+        let mut out = format!("tool(\"{}\")", self.tool);
+        if let Some(path) = &self.path {
+            out.push_str(&format!(" path \"{path}\""));
+        }
+        if let Some(command) = &self.command {
+            out.push_str(&format!(" command \"{command}\""));
+        }
+        out
+    }
+}
+
+/// A whole policy file: an ordered list of rules, the fallback effect, the
+/// combining [`Mode`] that decides how matching rules resolve to a verdict, and
+/// any inline self-[`Test`]s declared alongside the rules.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Policy {
     pub default: Effect,
     pub mode: Mode,
     pub rules: Vec<Rule>,
+    pub tests: Vec<Test>,
 }
