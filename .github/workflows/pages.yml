@@ -1,0 +1,50 @@
+name: pages
+
+# Builds the WebAssembly playground and deploys it to GitHub Pages.
+# Manual-only on purpose: going live is an explicit action, not an automatic
+# consequence of pushing. To use it, enable Pages once
+# (Settings -> Pages -> Source: "GitHub Actions"), then run this workflow.
+on:
+  workflow_dispatch:
+
+# Allow this workflow to publish to Pages.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One live deploy at a time; don't cancel an in-flight publish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust + wasm target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --locked
+
+      - name: Build the wasm bundle into playground/pkg
+        run: wasm-pack build warden-wasm --release --target web --out-dir ../playground/pkg
+
+      - name: Upload the playground as a Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: playground
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

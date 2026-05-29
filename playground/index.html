@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>warden — policy playground</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>warden</h1>
+      <p class="tagline">
+        A from-scratch policy DSL engine, compiled to WebAssembly. Edit the
+        policy, fire an action, watch the verdict — all in your browser, zero
+        round-trips.
+        <a href="https://github.com/ConalH/warden">source &amp; docs →</a>
+      </p>
+    </header>
+
+    <main>
+      <section class="panel" aria-labelledby="policy-heading">
+        <div class="panel-head">
+          <h2 id="policy-heading">Policy</h2>
+          <div class="examples">
+            <span>load:</span>
+            <button type="button" data-example="agent">agent</button>
+            <button type="button" data-example="shadowed">shadowed</button>
+            <button type="button" data-example="denyOverrides">deny-overrides</button>
+          </div>
+        </div>
+        <textarea
+          id="policy"
+          spellcheck="false"
+          autocomplete="off"
+          autocapitalize="off"
+        ></textarea>
+        <div class="report">
+          <span id="report-badge" class="badge">…</span>
+          <pre id="report-text"></pre>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="action-heading">
+        <div class="panel-head">
+          <h2 id="action-heading">Action</h2>
+        </div>
+        <form id="action-form" autocomplete="off">
+          <label>tool <input id="tool" type="text" value="bash" /></label>
+          <label>path <input id="path" type="text" placeholder="src/main.rs" /></label>
+          <label>command
+            <input id="command" type="text" value="rm -rf /tmp" placeholder="git status" />
+          </label>
+        </form>
+
+        <div class="decision">
+          <div id="decision-badge" class="verdict">…</div>
+          <p id="decision-reason" class="reason"></p>
+          <p id="decision-rule" class="rule"></p>
+        </div>
+
+        <p class="hint">
+          Leave <code>path</code> or <code>command</code> blank to treat it as
+          absent. The reason names the exact predicate that fired.
+        </p>
+      </section>
+    </main>
+
+    <noscript>This playground needs JavaScript and WebAssembly.</noscript>
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

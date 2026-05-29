@@ -1,0 +1,19 @@
+# Browser glue for the playground. Like `fuzz/`, this is its own detached
+# workspace (note the empty `[workspace]` table) so `wasm-bindgen` never enters
+# the `warden` crate's dependency graph — the core engine stays zero-dependency.
+[package]
+name = "warden-wasm"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen = "0.2"
+
+[dependencies.warden]
+path = ".."
+
+[workspace]
