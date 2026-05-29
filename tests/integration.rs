@@ -223,6 +223,93 @@ fn cli(args: &[&str]) -> (String, i32) {
     )
 }
 
+/// Like [`cli`], but feed `stdin` to the process — used to drive `--stdin` batch
+/// mode end to end.
+fn cli_stdin(args: &[&str], stdin: &str) -> (String, i32) {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_warden"))
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn the warden binary");
+    child
+        .stdin
+        .take()
+        .expect("child stdin")
+        .write_all(stdin.as_bytes())
+        .expect("write to child stdin");
+    let output = child.wait_with_output().expect("wait for warden binary");
+    (
+        String::from_utf8(output.stdout).expect("stdout should be utf-8"),
+        output.status.code().expect("process should return a code"),
+    )
+}
+
+#[test]
+fn stdin_batch_streams_one_verdict_per_line() {
+    let input = "{\"tool\":\"bash\",\"command\":\"rm -rf /tmp\"}\n\
+                 {\"tool\":\"read\",\"path\":\"src/main.rs\"}\n";
+    let (stdout, code) = cli_stdin(&["examples/agent.warden", "--stdin"], input);
+    assert_eq!(
+        code, 0,
+        "a clean batch exits 0 regardless of any deny verdict"
+    );
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 2, "one verdict per non-blank line: {stdout}");
+    assert!(lines[0].contains(r#""effect":"deny""#), "got: {}", lines[0]);
+    assert!(
+        lines[1].contains(r#""effect":"allow""#),
+        "got: {}",
+        lines[1]
+    );
+}
+
+#[test]
+fn stdin_batch_skips_blanks_and_flags_bad_lines() {
+    // A blank line is skipped; a malformed line and a tool-less line each become
+    // an error object, and any error flips the exit code to 1 — but the good
+    // line in between still produces its verdict.
+    let input = "\n\
+                 not json\n\
+                 {\"tool\":\"read\",\"path\":\"src/main.rs\"}\n\
+                 {\"path\":\"no tool here\"}\n";
+    let (stdout, code) = cli_stdin(&["examples/agent.warden", "--stdin"], input);
+    assert_eq!(code, 1, "a malformed line flips the batch exit to 1");
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(
+        lines.len(),
+        3,
+        "blank skipped, three lines emitted: {stdout}"
+    );
+    assert!(
+        lines[0].contains(r#""status":"error""#),
+        "got: {}",
+        lines[0]
+    );
+    assert!(
+        lines[1].contains(r#""effect":"allow""#),
+        "got: {}",
+        lines[1]
+    );
+    assert!(
+        lines[2].contains("missing required string field `tool`"),
+        "got: {}",
+        lines[2]
+    );
+}
+
+#[test]
+fn stdin_cannot_combine_with_tool() {
+    let (_stdout, code) = cli(&["examples/agent.warden", "--stdin", "--tool", "read"]);
+    assert_eq!(
+        code, 64,
+        "mixing --stdin with one-shot flags is a usage error"
+    );
+}
+
 #[test]
 fn json_decide_emits_verdict_with_deny_exit() {
     let (stdout, code) = cli(&[

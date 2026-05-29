@@ -223,6 +223,31 @@ failure reports `{status: "error", errors}` with the line and column of each
 diagnostic. The JSON is hand-rolled in [`src/json.rs`](src/json.rs) — no `serde`,
 so the core crate stays zero-dependency.
 
+## Batch mode (`--stdin`)
+
+A long-lived agent that checks many actions shouldn't pay process-spawn cost per
+check. Pass `--stdin` and `warden` reads one JSON action object per line and
+prints one JSON verdict per line, keeping a single process alive for the stream:
+
+```sh
+$ printf '%s\n' \
+    '{"tool":"bash","command":"rm -rf /tmp"}' \
+    '{"tool":"read","path":"src/main.rs"}' \
+  | warden examples/agent.warden --stdin
+{"effect":"deny","rule":5,"reason":"matched rule 5 (line 16): deny tool(\"bash\") because command \"rm -rf /tmp\" contains \"rm -rf\""}
+{"effect":"allow","rule":1,"reason":"matched rule 1 (line 8): allow tool(\"read\") because path \"src/main.rs\" matches \"src/**\""}
+```
+
+Each line must be an object with a string `tool`, plus optional string `path`
+and `command`; unknown fields are ignored, blank lines are skipped. A line that
+won't parse, or lacks `tool`, becomes `{"status":"error","error":…}` and flips
+the exit code to `1` — but never stops the stream, so the good lines still get
+decisions. The per-line effect rides in each verdict, so a `deny` doesn't change
+the process exit code the way it does for a single `--tool` check. Reading the
+stream back into the value tree reuses the same [`src/json.rs`](src/json.rs); its
+parser is **total** and depth-guarded, so a malformed or pathologically nested
+line is a clean error, never a panic.
+
 ## Grammar (EBNF)
 
 ```ebnf
@@ -259,7 +284,7 @@ per precedence level — see [`src/parser.rs`](src/parser.rs).
 | [`eval.rs`](src/eval.rs) | Tree-walking evaluator, first-match resolution |
 | [`selftest.rs`](src/selftest.rs) | Runs inline `test` expectations against the policy |
 | [`analysis.rs`](src/analysis.rs) | Static detection of unreachable (shadowed) rules |
-| [`json.rs`](src/json.rs) | Minimal zero-dep JSON writer for `--json` output |
+| [`json.rs`](src/json.rs) | Minimal zero-dep JSON: writer for `--json`, total parser for `--stdin` |
 | [`matcher.rs`](src/matcher.rs) | Backtracking glob matcher |
 | [`diagnostics.rs`](src/diagnostics.rs) | Spans + rustc-style caret rendering |
 
@@ -300,9 +325,13 @@ per precedence level — see [`src/parser.rs`](src/parser.rs).
   behavior (see above). **Structured output** — a `--json` mode for the verdict
   and the validation report, emitted from a hand-rolled zero-dep JSON writer, so
   `warden` slots into a CI step or an agent's tool-use loop (see above).
-- **Next:** open — a natural direction is reading the action from stdin (or a
-  batch of actions) so a long-lived agent can stream decisions through a single
-  `warden` process instead of paying process-spawn cost per check.
+  **Batch mode** — a `--stdin` loop that reads one JSON action per line and
+  streams one JSON verdict per line, so a long-lived agent checks many actions
+  through a single process; it reuses the JSON module's total, depth-guarded
+  parser (see above).
+- **Next:** open — a natural direction is letting a policy `include` another
+  file, so shared baseline rules (a company-wide secrets denylist, say) can live
+  in one place and be composed into per-project policies.
 
 ## Tests
 
