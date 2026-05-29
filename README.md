@@ -1,12 +1,12 @@
 # warden
 
-A from-scratch **policy DSL engine** in Rust. You write a small declarative
+A **policy DSL engine** in Rust. You write a small declarative
 policy; `warden` decides whether an agent's action should be **allowed**,
 **denied**, or escalated to a human (**ask**).
 
 It's the recognizable family of AWS Cedar / OPA-Rego / IAM / Claude Code's own
 permission rules — but the lexer, the Pratt parser, the glob matcher, and the
-compiler-style diagnostics are all hand-written with **zero dependencies**. The
+compiler-style diagnostics are all implemented in-crate with **zero dependencies**. The
 point is to demonstrate the fundamentals directly, not to wire up a crate.
 
 ```text
@@ -168,7 +168,7 @@ per precedence level — see [`src/parser.rs`](src/parser.rs).
 | Module | Responsibility |
 | --- | --- |
 | [`token.rs`](src/token.rs) | Token kinds + source spans |
-| [`lexer.rs`](src/lexer.rs) | Hand-written scanner; collects errors, never panics |
+| [`lexer.rs`](src/lexer.rs) | Single-pass scanner; collects errors, never panics |
 | [`ast.rs`](src/ast.rs) | `Policy` / `Rule` / `Expr` — the recursive tree |
 | [`parser.rs`](src/parser.rs) | Recursive descent + Pratt; error recovery |
 | [`eval.rs`](src/eval.rs) | Tree-walking evaluator, first-match resolution |
@@ -178,8 +178,8 @@ per precedence level — see [`src/parser.rs`](src/parser.rs).
 
 ## Design decisions
 
-- **Hand-rolled, no parser generator.** No `nom`/`pest`/`lalrpop` — the lexer
-  and parser exist to show the fundamentals. The crate has zero dependencies.
+- **No parser generator.** No `nom`/`pest`/`lalrpop` — the lexer and parser
+  are plain Rust over the token stream. The crate has zero dependencies.
 - **First-match-wins by default, `deny`-overrides opt-in.** First-match is the
   simplest semantics that stays predictable as a policy grows; `deny`-overrides
   is the conservative alternative for security-critical policies, chosen per

@@ -1,4 +1,4 @@
-//! Hand-written parser. The rule grammar is plain recursive descent; the
+//! Parser for the rule grammar: plain recursive descent; the
 //! `when` condition is parsed with a Pratt (precedence-climbing) loop so that
 //! `or` binds looser than `and`, and `not` binds tightest.
 //!

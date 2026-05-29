@@ -1,6 +1,6 @@
 //! # warden
 //!
-//! A from-scratch policy DSL engine. A policy file is a list of rules that
+//! A policy DSL engine. A policy file is a list of rules that
 //! decide whether an agent's action is **allowed**, **denied**, or requires a
 //! human to be **asked**. The pipeline is the classic interpreter shape:
 //!
@@ -8,7 +8,7 @@
 //! source ──▶ [lexer] ──▶ tokens ──▶ [parser] ──▶ AST (Policy) ──▶ [evaluator] ──▶ Verdict
 //! ```
 //!
-//! Everything is hand-written with zero dependencies: the lexer, the Pratt
+//! Everything is implemented in-crate with zero dependencies: the lexer, the Pratt
 //! parser, the glob matcher, and the rustc-style diagnostics.
 //!
 //! ```

@@ -1,5 +1,5 @@
-//! Hand-written scanner. No regex, no lexer generator: the point is to show
-//! the fundamentals. Turns source text into a flat token stream, tracking
+//! Scanner. No regex, no lexer generator. Turns source text into a flat
+//! token stream, tracking
 //! byte offsets and line/column for diagnostics. Errors are collected, not
 //! thrown, so the parser still receives a usable (if shorter) stream.
 

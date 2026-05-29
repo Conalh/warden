@@ -107,7 +107,7 @@ fn take_value(args: &[String], i: &mut usize) -> Result<String, String> {
 
 fn print_usage() {
     eprintln!(
-        "warden - a from-scratch policy DSL engine\n\n\
+        "warden - a policy DSL engine\n\n\
          USAGE:\n\
          \x20 warden <policy-file>\n\
          \x20 warden <policy-file> --tool <name> [--path <p>] [--command <c>]\n\n\
