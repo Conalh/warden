@@ -1,0 +1,28 @@
+# Fuzzing lives in its own crate so the `warden` library stays zero-dependency:
+# the empty `[workspace]` table below detaches this package from the parent
+# workspace, so `libfuzzer-sys` is never pulled into a normal `cargo build`,
+# `cargo test`, or `cargo publish` of `warden` itself.
+[package]
+name = "warden-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.warden]
+path = ".."
+
+# libFuzzer drives a single `#[no_main]` binary per target.
+[[bin]]
+name = "parse"
+path = "fuzz_targets/parse.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]

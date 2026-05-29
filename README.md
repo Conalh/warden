@@ -189,7 +189,9 @@ per precedence level — see [`src/parser.rs`](src/parser.rs).
   never fires. Catching it early is the whole value of having a type system.
 - **Collect diagnostics, don't throw.** Lexer and parser accumulate errors and
   resynchronize at rule boundaries, so one run reports every problem with a
-  caret pointing at the offending span.
+  caret pointing at the offending span. The parser is **total** — even
+  pathological input (thousands of nested `(`) yields a diagnostic, not a
+  stack overflow — and a libFuzzer harness guards that property (see *Fuzzing*).
 
 ## Roadmap
 
@@ -202,9 +204,9 @@ per precedence level — see [`src/parser.rs`](src/parser.rs).
   hard boundary; `*` stays within a path segment while `**` spans them.
   **Richer glob subsumption** — the shadow analysis decides glob *language
   inclusion* with the same segment rules, so `**` is recognized as covering
-  `src/**` while a single `*` is not.
-- **Next:** `cargo fuzz` on the parser.
-- **Later:** a `wasm-bindgen` build powering an in-browser playground, keeping
+  `src/**` while a single `*` is not. **Parser fuzzing** — a libFuzzer harness
+  and a depth guard that make the parser provably total (see below).
+- **Next:** a `wasm-bindgen` build powering an in-browser playground, keeping
   the core crate zero-dependency by isolating the wasm glue behind a feature.
 
 ## Tests
@@ -215,6 +217,32 @@ cargo test
 
 Unit tests live beside each module; end-to-end policy scenarios are in
 [`tests/integration.rs`](tests/integration.rs).
+
+### Fuzzing
+
+The parser is meant to be **total**: on *any* input it returns `Ok(Policy)` or
+`Err(diagnostics)` — never panicking, overflowing, or looping forever. A
+libFuzzer harness pins that down by throwing arbitrary bytes at
+[`warden::parse`](src/lib.rs):
+
+```sh
+cargo +nightly fuzz run parse        # needs the nightly toolchain + cargo-fuzz
+```
+
+The fuzz crate lives in its own detached workspace
+([`fuzz/`](fuzz/Cargo.toml)), so `libfuzzer-sys` never enters `warden`'s own
+dependency graph — the core crate stays zero-dependency. libFuzzer's `fuzzer`
+sanitizer ships only on Unix targets (not `windows-msvc`), so the harness runs
+in CI on Linux ([`.github/workflows/fuzz.yml`](.github/workflows/fuzz.yml)); the
+same invariant is checked on every platform by
+[`tests/parser_robustness.rs`](tests/parser_robustness.rs), which feeds tens of
+thousands of generated and adversarial inputs through the parser with no
+external dependency.
+
+The one input class that *could* defeat totality — thousands of nested `(` or
+`not` overflowing the recursive-descent stack — is handled by a depth bound in
+the parser, which emits a `condition nested too deeply` diagnostic instead of
+recursing without limit.
 
 ## License
 

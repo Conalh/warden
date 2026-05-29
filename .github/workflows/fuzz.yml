@@ -1,0 +1,36 @@
+name: fuzz
+
+# libFuzzer needs the `fuzzer` sanitizer, which only ships on Unix targets, so
+# the parser fuzz harness runs here on Linux rather than on a contributor's
+# machine. Kept off the per-PR path (building cargo-fuzz is slow): it runs
+# weekly and on demand.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays, 06:00 UTC
+
+jobs:
+  fuzz-parse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install nightly toolchain + cargo-fuzz
+        run: |
+          rustup toolchain install nightly --profile minimal
+          cargo install cargo-fuzz --locked
+
+      - name: Seed the corpus with the shipped example policies
+        run: |
+          mkdir -p fuzz/corpus/parse
+          cp examples/*.warden fuzz/corpus/parse/
+
+      - name: Fuzz the parser (3 minutes)
+        run: cargo +nightly fuzz run parse -- -max_total_time=180
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts/

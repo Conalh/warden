@@ -16,6 +16,11 @@ use crate::token::{Token, TokenKind};
 const BP_OR: u8 = 1;
 const BP_AND: u8 = 3;
 
+/// Cap on condition-parser recursion depth. Real policies nest only a handful
+/// of levels; this stops a pathological input (thousands of `(` or `not`) from
+/// overflowing the stack — the parser reports a diagnostic instead of aborting.
+const MAX_EXPR_DEPTH: u32 = 256;
+
 pub fn parse_tokens(tokens: Vec<Token>) -> (Policy, Vec<Diagnostic>) {
     let mut parser = Parser { tokens, pos: 0, diagnostics: Vec::new() };
     let policy = parser.parse_policy();
@@ -90,26 +95,30 @@ impl Parser {
         self.expect(TokenKind::RParen)?;
         let condition = if *self.peek() == TokenKind::When {
             self.advance();
-            Some(self.parse_expr(0)?)
+            Some(self.parse_expr(0, 0)?)
         } else {
             None
         };
         Ok(Rule { effect, tool, condition, span: start })
     }
 
-    /// Pratt loop over the logical operators.
-    fn parse_expr(&mut self, min_bp: u8) -> Result<Expr, Diagnostic> {
-        let mut lhs = self.parse_prefix()?;
+    /// Pratt loop over the logical operators. `depth` bounds recursion so a
+    /// deeply nested condition errors rather than overflowing the stack.
+    fn parse_expr(&mut self, min_bp: u8, depth: u32) -> Result<Expr, Diagnostic> {
+        if depth > MAX_EXPR_DEPTH {
+            return Err(self.too_deep());
+        }
+        let mut lhs = self.parse_prefix(depth + 1)?;
         loop {
             match self.peek() {
                 TokenKind::Or if BP_OR >= min_bp => {
                     self.advance();
-                    let rhs = self.parse_expr(BP_OR + 1)?;
+                    let rhs = self.parse_expr(BP_OR + 1, depth + 1)?;
                     lhs = Expr::Or(Box::new(lhs), Box::new(rhs));
                 }
                 TokenKind::And if BP_AND >= min_bp => {
                     self.advance();
-                    let rhs = self.parse_expr(BP_AND + 1)?;
+                    let rhs = self.parse_expr(BP_AND + 1, depth + 1)?;
                     lhs = Expr::And(Box::new(lhs), Box::new(rhs));
                 }
                 _ => break,
@@ -118,22 +127,28 @@ impl Parser {
         Ok(lhs)
     }
 
-    fn parse_prefix(&mut self) -> Result<Expr, Diagnostic> {
+    fn parse_prefix(&mut self, depth: u32) -> Result<Expr, Diagnostic> {
+        if depth > MAX_EXPR_DEPTH {
+            return Err(self.too_deep());
+        }
         if *self.peek() == TokenKind::Not {
             self.advance();
-            let operand = self.parse_prefix()?;
+            let operand = self.parse_prefix(depth + 1)?;
             Ok(Expr::Not(Box::new(operand)))
         } else {
-            self.parse_primary()
+            self.parse_primary(depth + 1)
         }
     }
 
-    fn parse_primary(&mut self) -> Result<Expr, Diagnostic> {
+    fn parse_primary(&mut self, depth: u32) -> Result<Expr, Diagnostic> {
+        if depth > MAX_EXPR_DEPTH {
+            return Err(self.too_deep());
+        }
         let token = self.peek_token().clone();
         match token.kind {
             TokenKind::LParen => {
                 self.advance();
-                let inner = self.parse_expr(0)?;
+                let inner = self.parse_expr(0, depth + 1)?;
                 self.expect(TokenKind::RParen)?;
                 Ok(inner)
             }
@@ -191,6 +206,15 @@ impl Parser {
         };
         self.advance();
         Ok((effect, token.span))
+    }
+
+    /// Diagnostic for a condition that exceeds [`MAX_EXPR_DEPTH`], pointed at
+    /// the token where the parser gave up descending.
+    fn too_deep(&self) -> Diagnostic {
+        Diagnostic::new(
+            format!("condition nested too deeply (max {MAX_EXPR_DEPTH})"),
+            self.peek_token().span,
+        )
     }
 
     // --- token-stream helpers ---
@@ -356,6 +380,20 @@ mod tests {
         let err = parse(r#"allow tool("read") when paht matches "x""#).unwrap_err();
         assert_eq!(err.len(), 1);
         assert!(err[0].message.contains("unknown field"));
+    }
+
+    #[test]
+    fn deeply_nested_condition_errors_instead_of_overflowing() {
+        // Thousands of `(` or `not` would blow the stack via naive recursion;
+        // the depth guard turns that into an ordinary diagnostic.
+        for prefix in [&"(".repeat(10_000), &"not ".repeat(10_000)] {
+            let src = format!(r#"deny tool("x") when {prefix}path matches "a""#);
+            let err = parse(&src).unwrap_err();
+            assert!(
+                err.iter().any(|d| d.message.contains("nested too deeply")),
+                "expected a depth diagnostic, got: {err:?}"
+            );
+        }
     }
 
     #[test]
