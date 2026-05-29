@@ -1,17 +1,47 @@
 # warden
 
-A **policy DSL engine** in Rust. You write a small declarative
-policy; `warden` decides whether an agent's action should be **allowed**,
-**denied**, or escalated to a human (**ask**).
+You write a small declarative policy; `warden` decides whether an agent's action
+should be **allowed**, **denied**, or escalated to a human (**ask**).
 
-It's the recognizable family of AWS Cedar / OPA-Rego / IAM / Claude Code's own
-permission rules — but the lexer, the Pratt parser, the glob matcher, and the
-compiler-style diagnostics are all implemented in-crate with **zero dependencies**. The
-point is to demonstrate the fundamentals directly, not to wire up a crate.
+warden is a from-scratch policy language for agent tool-use, built to show the
+fundamentals end to end: a hand-written lexer, a recursive-descent + Pratt
+parser, a glob matcher, sound static unreachable-rule analysis, libFuzzer-proven
+parser totality, and a zero-dependency core that also compiles to wasm. The
+policy domain is the familiar Cedar / OPA-Rego / IAM family — the point is the
+engine, implemented in-crate rather than wired up.
 
 ```text
 source ──▶ [lexer] ──▶ tokens ──▶ [parser] ──▶ AST (Policy) ──▶ [evaluator] ──▶ Verdict
 ```
+
+## Where this fits
+
+warden isn't meant to be wired into a stack as "another policy engine." It's the
+deterministic decision core that the
+[agent-gov suite](https://github.com/Conalh/agent-gov-core) routes agent actions
+through. Enforcement lives in
+**[Barbican](https://github.com/Conalh/barbican)**, an MCP stdio proxy that sits
+in the tool-use loop and consults a single long-lived `warden --stdin` process on
+every `tools/call`, getting back `allow` / `deny` / `ask` as JSON before the call
+is let through. Most agents expose no policy hook to register against — so
+Barbican *is* the hook: it interposes rather than plugging in. warden on its own
+is the engine and the language; Barbican is what gives it a runtime surface.
+
+## Cross-client policy — and what it doesn't cover
+
+One ruleset, enforced across Claude Code, Cursor, and Codex on the MCP tool-call
+surface. That portability isn't warden's — it comes from
+[agent-gov-core](https://github.com/Conalh/agent-gov-core), which normalizes each
+client's format (`parseAnthropicLine`, `parseCodexLine`, …) into the single shape
+warden evaluates. Because Barbican interposes on the `tools/call` path, the same
+policy applies no matter which client is driving.
+
+**What this does not cover:** each client's *native* permission system. Claude
+Code's own Bash/Read/Write allow-deny rules enforce inside the client and never
+reach the proxy, so warden never sees them. Read it as two layers — native
+built-ins gate the client's own tools; warden governs what crosses the MCP
+surface. "One policy everywhere" is true for the MCP-call surface, not for
+in-client tool permissions.
 
 ## Quickstart
 
