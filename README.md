@@ -31,6 +31,27 @@ cargo run -- examples/agent.warden --tool read --path src/main.rs
 Exit codes: `0` allow/ask · `1` deny · `2` parse error · `3` unreachable rules ·
 `64` usage error — so `warden` drops straight into a shell guard or CI check.
 
+## Playground
+
+The same engine compiles to WebAssembly and runs entirely in the browser: edit a
+policy, fire an action, and watch the verdict and the lint report update live,
+with no server round-trip. The page in [`playground/`](playground/) is plain
+HTML/CSS/JS over two `wasm-bindgen` exports — `validate` and `decide`.
+
+```sh
+# Build the wasm bundle into playground/pkg/ (needs `cargo install wasm-pack`)
+wasm-pack build warden-wasm --release --target web --out-dir ../playground/pkg
+
+# Serve the folder — wasm must load over http://, not file://
+python -m http.server --directory playground 8080
+```
+
+The glue crate ([`warden-wasm/`](warden-wasm/Cargo.toml)) is a detached
+workspace, exactly like `fuzz/`, so `wasm-bindgen` never enters `warden`'s
+dependency graph and the core crate stays zero-dependency. A
+[GitHub Pages workflow](.github/workflows/pages.yml) builds and deploys the
+playground on demand.
+
 ## The language
 
 A policy is an ordered list of rules and a fallback `default`. Rules are tried
@@ -206,8 +227,11 @@ per precedence level — see [`src/parser.rs`](src/parser.rs).
   inclusion* with the same segment rules, so `**` is recognized as covering
   `src/**` while a single `*` is not. **Parser fuzzing** — a libFuzzer harness
   and a depth guard that make the parser provably total (see below).
-- **Next:** a `wasm-bindgen` build powering an in-browser playground, keeping
-  the core crate zero-dependency by isolating the wasm glue behind a feature.
+  **In-browser playground** — a `wasm-bindgen` build of the engine, with the
+  glue isolated in a detached crate so the core stays zero-dependency (see
+  above).
+- **Next:** open — a natural direction is inline *test blocks* (expected
+  verdicts checked at validate time) so a policy can assert its own behavior.
 
 ## Tests
 
