@@ -1,0 +1,34 @@
+name: ci
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+# Pin minimum privileges for the GITHUB_TOKEN. This job only reads the
+# checked-out code; nothing here writes to the repo or publishes artifacts.
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          # Don't leave the GITHUB_TOKEN in .git/config — subsequent steps
+          # run `cargo build`, and a poisoned transitive dep's build.rs could
+          # otherwise read it off disk. (warden itself is zero-dependency, but
+          # the habit costs nothing.)
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          components: clippy, rustfmt
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Test
+        run: cargo test --all --locked
+      - name: Build (release)
+        run: cargo build --release --locked
