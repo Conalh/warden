@@ -12,7 +12,12 @@ pub struct Span {
 
 impl Span {
     pub fn new(start: usize, end: usize, line: u32, col: u32) -> Self {
-        Span { start, end, line, col }
+        Span {
+            start,
+            end,
+            line,
+            col,
+        }
     }
 }
 
@@ -26,7 +31,10 @@ pub struct Diagnostic {
 
 impl Diagnostic {
     pub fn new(message: impl Into<String>, span: Span) -> Self {
-        Diagnostic { message: message.into(), span }
+        Diagnostic {
+            message: message.into(),
+            span,
+        }
     }
 
     /// Render against the original source with an `error:` label, e.g.

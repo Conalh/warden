@@ -33,10 +33,10 @@ mod matcher;
 mod parser;
 mod token;
 
-pub use analysis::{find_shadowed, Lint};
+pub use analysis::{Lint, find_shadowed};
 pub use ast::{Effect, Expr, Field, Mode, Policy, Rule};
-pub use diagnostics::{render_all, Diagnostic, Span};
-pub use eval::{evaluate, Action, Verdict};
+pub use diagnostics::{Diagnostic, Span, render_all};
+pub use eval::{Action, Verdict, evaluate};
 
 use lexer::Lexer;
 

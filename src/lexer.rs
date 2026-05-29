@@ -36,7 +36,10 @@ impl<'a> Lexer<'a> {
             let c = match self.peek() {
                 Some(c) => c,
                 None => {
-                    tokens.push(Token::new(TokenKind::Eof, Span::new(start, start, line, col)));
+                    tokens.push(Token::new(
+                        TokenKind::Eof,
+                        Span::new(start, start, line, col),
+                    ));
                     break;
                 }
             };
@@ -60,8 +63,10 @@ impl<'a> Lexer<'a> {
                 other => {
                     self.bump();
                     let span = Span::new(start, self.cur_byte(), line, col);
-                    self.diagnostics
-                        .push(Diagnostic::new(format!("unexpected character `{other}`"), span));
+                    self.diagnostics.push(Diagnostic::new(
+                        format!("unexpected character `{other}`"),
+                        span,
+                    ));
                 }
             }
         }
@@ -73,7 +78,10 @@ impl<'a> Lexer<'a> {
     }
 
     fn cur_byte(&self) -> usize {
-        self.chars.get(self.i).map(|&(b, _)| b).unwrap_or(self.source.len())
+        self.chars
+            .get(self.i)
+            .map(|&(b, _)| b)
+            .unwrap_or(self.source.len())
     }
 
     fn bump(&mut self) -> Option<char> {
@@ -151,7 +159,10 @@ impl<'a> Lexer<'a> {
                 }
             }
         }
-        Some(Token::new(TokenKind::Str(value), Span::new(start, self.cur_byte(), line, col)))
+        Some(Token::new(
+            TokenKind::Str(value),
+            Span::new(start, self.cur_byte(), line, col),
+        ))
     }
 
     fn lex_ident(&mut self, start: usize, line: u32, col: u32) -> Token {

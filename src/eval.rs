@@ -16,7 +16,11 @@ pub struct Action {
 
 impl Action {
     pub fn new(tool: impl Into<String>) -> Self {
-        Action { tool: tool.into(), path: None, command: None }
+        Action {
+            tool: tool.into(),
+            path: None,
+            command: None,
+        }
     }
 
     pub fn with_path(mut self, path: impl Into<String>) -> Self {
@@ -85,9 +89,15 @@ fn evaluate_deny_overrides(policy: &Policy, action: &Action) -> Verdict {
     };
 
     // Earliest rule carrying the winning effect — stable, intuitive to trace.
-    let (index, rule) = matches.iter().find(|(_, r)| restrictiveness(r.effect) == top).unwrap();
+    let (index, rule) = matches
+        .iter()
+        .find(|(_, r)| restrictiveness(r.effect) == top)
+        .unwrap();
     let mut explanation = explain(*index, rule, action);
-    if let Some((over_idx, over)) = matches.iter().find(|(_, r)| restrictiveness(r.effect) < top) {
+    if let Some((over_idx, over)) = matches
+        .iter()
+        .find(|(_, r)| restrictiveness(r.effect) < top)
+    {
         explanation += &format!(
             "; under deny_overrides this beats rule {} ({} tool(\"{}\"))",
             over_idx + 1,
@@ -95,14 +105,21 @@ fn evaluate_deny_overrides(policy: &Policy, action: &Action) -> Verdict {
             over.tool
         );
     }
-    Verdict { effect: rule.effect, matched_rule: Some(*index), explanation }
+    Verdict {
+        effect: rule.effect,
+        matched_rule: Some(*index),
+        explanation,
+    }
 }
 
 fn default_verdict(policy: &Policy) -> Verdict {
     Verdict {
         effect: policy.default,
         matched_rule: None,
-        explanation: format!("no rule matched; applied default `{}`", policy.default.as_str()),
+        explanation: format!(
+            "no rule matched; applied default `{}`",
+            policy.default.as_str()
+        ),
     }
 }
 
@@ -131,12 +148,12 @@ fn eval_expr(expr: &Expr, action: &Action) -> bool {
         Expr::And(lhs, rhs) => eval_expr(lhs, action) && eval_expr(rhs, action),
         Expr::Or(lhs, rhs) => eval_expr(lhs, action) || eval_expr(rhs, action),
         Expr::Not(inner) => !eval_expr(inner, action),
-        Expr::Match { field, pattern, .. } => {
-            action.field(*field).is_some_and(|value| glob_match(pattern, value))
-        }
-        Expr::Contains { field, needle, .. } => {
-            action.field(*field).is_some_and(|value| value.contains(needle.as_str()))
-        }
+        Expr::Match { field, pattern, .. } => action
+            .field(*field)
+            .is_some_and(|value| glob_match(pattern, value)),
+        Expr::Contains { field, needle, .. } => action
+            .field(*field)
+            .is_some_and(|value| value.contains(needle.as_str())),
     }
 }
 
@@ -156,7 +173,9 @@ fn explain(index: usize, rule: &Rule, action: &Action) -> String {
 }
 
 fn show(action: &Action, field: Field) -> String {
-    action.field(field).map_or_else(|| "(unset)".to_string(), |v| format!("\"{v}\""))
+    action
+        .field(field)
+        .map_or_else(|| "(unset)".to_string(), |v| format!("\"{v}\""))
 }
 
 /// Explain why a condition that evaluated **true** held, naming the deciding
@@ -178,10 +197,20 @@ fn why_true(expr: &Expr, action: &Action) -> String {
         // rather than wrapping a double negative.
         Expr::Not(inner) => why_false(inner, action),
         Expr::Match { field, pattern, .. } => {
-            format!("{} {} matches \"{}\"", field.as_str(), show(action, *field), pattern)
+            format!(
+                "{} {} matches \"{}\"",
+                field.as_str(),
+                show(action, *field),
+                pattern
+            )
         }
         Expr::Contains { field, needle, .. } => {
-            format!("{} {} contains \"{}\"", field.as_str(), show(action, *field), needle)
+            format!(
+                "{} {} contains \"{}\"",
+                field.as_str(),
+                show(action, *field),
+                needle
+            )
         }
     }
 }
@@ -203,10 +232,20 @@ fn why_false(expr: &Expr, action: &Action) -> String {
         }
         Expr::Not(inner) => why_true(inner, action),
         Expr::Match { field, pattern, .. } => {
-            format!("{} {} does not match \"{}\"", field.as_str(), show(action, *field), pattern)
+            format!(
+                "{} {} does not match \"{}\"",
+                field.as_str(),
+                show(action, *field),
+                pattern
+            )
         }
         Expr::Contains { field, needle, .. } => {
-            format!("{} {} does not contain \"{}\"", field.as_str(), show(action, *field), needle)
+            format!(
+                "{} {} does not contain \"{}\"",
+                field.as_str(),
+                show(action, *field),
+                needle
+            )
         }
     }
 }
@@ -273,7 +312,8 @@ mod tests {
         let p = policy(r#"deny tool("bash") when command contains "rm -rf""#);
         let v = evaluate(&p, &Action::new("bash").with_command("rm -rf /tmp"));
         assert!(
-            v.explanation.contains(r#"command "rm -rf /tmp" contains "rm -rf""#),
+            v.explanation
+                .contains(r#"command "rm -rf /tmp" contains "rm -rf""#),
             "got: {}",
             v.explanation
         );
@@ -285,7 +325,11 @@ mod tests {
             r#"deny tool("bash") when command contains "mkfs" or command contains "rm -rf""#,
         );
         let v = evaluate(&p, &Action::new("bash").with_command("sudo rm -rf /"));
-        assert!(v.explanation.contains(r#"contains "rm -rf""#), "got: {}", v.explanation);
+        assert!(
+            v.explanation.contains(r#"contains "rm -rf""#),
+            "got: {}",
+            v.explanation
+        );
         assert!(!v.explanation.contains("mkfs"), "got: {}", v.explanation);
     }
 
@@ -294,7 +338,8 @@ mod tests {
         let p = policy(r#"ask tool("write") when not path matches "package.json""#);
         let v = evaluate(&p, &Action::new("write").with_path("tsconfig.json"));
         assert!(
-            v.explanation.contains(r#"path "tsconfig.json" does not match "package.json""#),
+            v.explanation
+                .contains(r#"path "tsconfig.json" does not match "package.json""#),
             "got: {}",
             v.explanation
         );
@@ -355,7 +400,8 @@ mod tests {
         );
         let v = evaluate(&p, &Action::new("read").with_path("config/.env.local"));
         assert!(
-            v.explanation.contains("under deny_overrides this beats rule 1"),
+            v.explanation
+                .contains("under deny_overrides this beats rule 1"),
             "got: {}",
             v.explanation
         );

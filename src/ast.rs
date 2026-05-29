@@ -86,9 +86,17 @@ pub enum Expr {
     Or(Box<Expr>, Box<Expr>),
     Not(Box<Expr>),
     /// `<field> matches "<glob>"`
-    Match { field: Field, pattern: String, span: Span },
+    Match {
+        field: Field,
+        pattern: String,
+        span: Span,
+    },
     /// `<field> contains "<substring>"`
-    Contains { field: Field, needle: String, span: Span },
+    Contains {
+        field: Field,
+        needle: String,
+        span: Span,
+    },
 }
 
 /// `<effect> tool("<glob>") [when <expr>]`

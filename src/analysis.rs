@@ -114,12 +114,28 @@ fn expr_subsumes(earlier: &Expr, later: &Expr) -> bool {
 fn leaf_subsumes(earlier: &Expr, later: &Expr) -> bool {
     match (earlier, later) {
         (
-            Expr::Match { field: ef, pattern: ep, .. },
-            Expr::Match { field: lf, pattern: lp, .. },
+            Expr::Match {
+                field: ef,
+                pattern: ep,
+                ..
+            },
+            Expr::Match {
+                field: lf,
+                pattern: lp,
+                ..
+            },
         ) => ef == lf && glob_subsumes(ep, lp),
         (
-            Expr::Contains { field: ef, needle: en, .. },
-            Expr::Contains { field: lf, needle: ln, .. },
+            Expr::Contains {
+                field: ef,
+                needle: en,
+                ..
+            },
+            Expr::Contains {
+                field: lf,
+                needle: ln,
+                ..
+            },
         ) => ef == lf && ln.contains(en.as_str()),
         _ => false,
     }
@@ -132,12 +148,28 @@ fn expr_eq(a: &Expr, b: &Expr) -> bool {
         (Expr::Or(a1, a2), Expr::Or(b1, b2)) => expr_eq(a1, b1) && expr_eq(a2, b2),
         (Expr::Not(a1), Expr::Not(b1)) => expr_eq(a1, b1),
         (
-            Expr::Match { field: f1, pattern: p1, .. },
-            Expr::Match { field: f2, pattern: p2, .. },
+            Expr::Match {
+                field: f1,
+                pattern: p1,
+                ..
+            },
+            Expr::Match {
+                field: f2,
+                pattern: p2,
+                ..
+            },
         ) => f1 == f2 && p1 == p2,
         (
-            Expr::Contains { field: f1, needle: n1, .. },
-            Expr::Contains { field: f2, needle: n2, .. },
+            Expr::Contains {
+                field: f1,
+                needle: n1,
+                ..
+            },
+            Expr::Contains {
+                field: f2,
+                needle: n2,
+                ..
+            },
         ) => f1 == f2 && n1 == n2,
         _ => false,
     }
@@ -146,12 +178,23 @@ fn expr_eq(a: &Expr, b: &Expr) -> bool {
 fn explain(index: usize, earlier: &Rule) -> String {
     let kind = if earlier.condition.is_none() {
         if earlier.tool == "*" {
-            format!("an unconditional catch-all `{} tool(\"*\")`", earlier.effect.as_str())
+            format!(
+                "an unconditional catch-all `{} tool(\"*\")`",
+                earlier.effect.as_str()
+            )
         } else {
-            format!("an unconditional `{} tool(\"{}\")`", earlier.effect.as_str(), earlier.tool)
+            format!(
+                "an unconditional `{} tool(\"{}\")`",
+                earlier.effect.as_str(),
+                earlier.tool
+            )
         }
     } else {
-        format!("a broader rule (`{} tool(\"{}\")`)", earlier.effect.as_str(), earlier.tool)
+        format!(
+            "a broader rule (`{} tool(\"{}\")`)",
+            earlier.effect.as_str(),
+            earlier.tool
+        )
     };
     format!(
         "unreachable rule: rule {} at line {} ({}) always matches first",

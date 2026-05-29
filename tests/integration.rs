@@ -1,7 +1,7 @@
 //! End-to-end tests over the full pipeline (parse -> evaluate) and the
 //! diagnostics surface, including the shipped example policy.
 
-use warden::{evaluate, parse, Action, Effect, Mode};
+use warden::{Action, Effect, Mode, evaluate, parse};
 
 const EXAMPLE: &str = include_str!("../examples/agent.warden");
 const SHADOWED: &str = include_str!("../examples/shadowed.warden");
@@ -22,14 +22,29 @@ fn shipped_example_parses() {
 #[test]
 fn example_decisions() {
     let cases = [
-        (Action::new("bash").with_command("rm -rf /tmp"), Effect::Deny),
-        (Action::new("bash").with_command("git status -s"), Effect::Allow),
+        (
+            Action::new("bash").with_command("rm -rf /tmp"),
+            Effect::Deny,
+        ),
+        (
+            Action::new("bash").with_command("git status -s"),
+            Effect::Allow,
+        ),
         (Action::new("read").with_path("src/main.rs"), Effect::Allow),
-        (Action::new("read").with_path("config/.env.local"), Effect::Deny),
-        (Action::new("write").with_path("app/tsconfig.json"), Effect::Ask),
+        (
+            Action::new("read").with_path("config/.env.local"),
+            Effect::Deny,
+        ),
+        (
+            Action::new("write").with_path("app/tsconfig.json"),
+            Effect::Ask,
+        ),
         (Action::new("write").with_path("src/lib.rs"), Effect::Allow),
         // No rule matches an unknown tool -> default ask.
-        (Action::new("browse").with_path("https://example.com"), Effect::Ask),
+        (
+            Action::new("browse").with_path("https://example.com"),
+            Effect::Ask,
+        ),
     ];
     for (action, expected) in cases {
         let policy = parse(EXAMPLE).unwrap();
@@ -50,15 +65,22 @@ fn wildcard_tool_blocks_secrets_regardless_of_tool() {
         Effect::Deny
     );
     assert_eq!(
-        decide(src, Action::new("write").with_path("/home/me/.ssh/id_rsa.pub")),
+        decide(
+            src,
+            Action::new("write").with_path("/home/me/.ssh/id_rsa.pub")
+        ),
         Effect::Deny
     );
 }
 
 #[test]
 fn precedence_and_negation_combine() {
-    let src = r#"ask tool("write") when path matches "**/*.json" and not path matches "package.json""#;
-    assert_eq!(decide(src, Action::new("write").with_path("tsconfig.json")), Effect::Ask);
+    let src =
+        r#"ask tool("write") when path matches "**/*.json" and not path matches "package.json""#;
+    assert_eq!(
+        decide(src, Action::new("write").with_path("tsconfig.json")),
+        Effect::Ask
+    );
     // package.json is excluded by the `not`, so it falls through to default ask...
     // here there is no default declared, so the implicit default `ask` applies too;
     // distinguish by checking the matched rule instead.
@@ -115,7 +137,11 @@ fn deny_overrides_example_resolves_by_restrictiveness() {
     );
     // `ask` on json overrides the broad write allow.
     assert_eq!(
-        evaluate(&policy, &Action::new("write").with_path("app/tsconfig.json")).effect,
+        evaluate(
+            &policy,
+            &Action::new("write").with_path("app/tsconfig.json")
+        )
+        .effect,
         Effect::Ask
     );
     // A plain write is just allowed.
@@ -142,6 +168,9 @@ fn same_rules_differ_by_mode() {
 #[test]
 fn shadowed_example_flags_dead_rules() {
     let policy = parse(SHADOWED).unwrap();
-    let dead: Vec<usize> = warden::find_shadowed(&policy).iter().map(|l| l.rule).collect();
+    let dead: Vec<usize> = warden::find_shadowed(&policy)
+        .iter()
+        .map(|l| l.rule)
+        .collect();
     assert_eq!(dead, vec![1, 3, 5, 7]);
 }

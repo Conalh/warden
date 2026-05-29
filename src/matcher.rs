@@ -27,7 +27,14 @@ pub fn glob_match(pattern: &str, text: &str) -> bool {
     matches(&pat, &txt, 0, 0, &mut cache, width)
 }
 
-fn matches(pat: &[char], txt: &[char], pi: usize, ti: usize, cache: &mut [u8], width: usize) -> bool {
+fn matches(
+    pat: &[char],
+    txt: &[char],
+    pi: usize,
+    ti: usize,
+    cache: &mut [u8],
+    width: usize,
+) -> bool {
     let key = pi * width + ti;
     match cache[key] {
         1 => return true,
@@ -39,7 +46,14 @@ fn matches(pat: &[char], txt: &[char], pi: usize, ti: usize, cache: &mut [u8], w
     result
 }
 
-fn compute(pat: &[char], txt: &[char], pi: usize, ti: usize, cache: &mut [u8], width: usize) -> bool {
+fn compute(
+    pat: &[char],
+    txt: &[char],
+    pi: usize,
+    ti: usize,
+    cache: &mut [u8],
+    width: usize,
+) -> bool {
     if pi == pat.len() {
         return ti == txt.len();
     }
@@ -62,9 +76,7 @@ fn compute(pat: &[char], txt: &[char], pi: usize, ti: usize, cache: &mut [u8], w
                 && (spans_slash || txt[ti] != '/')
                 && matches(pat, txt, pi, ti + 1, cache, width)
         }
-        '?' => {
-            ti < txt.len() && txt[ti] != '/' && matches(pat, txt, pi + 1, ti + 1, cache, width)
-        }
+        '?' => ti < txt.len() && txt[ti] != '/' && matches(pat, txt, pi + 1, ti + 1, cache, width),
         literal => {
             ti < txt.len() && txt[ti] == literal && matches(pat, txt, pi + 1, ti + 1, cache, width)
         }
@@ -93,7 +105,11 @@ fn tokenize(pattern: &str) -> Vec<Tok> {
                 while i < chars.len() && chars[i] == '*' {
                     i += 1;
                 }
-                toks.push(if i - start >= 2 { Tok::DStar } else { Tok::Star });
+                toks.push(if i - start >= 2 {
+                    Tok::DStar
+                } else {
+                    Tok::Star
+                });
             }
             '?' => {
                 toks.push(Tok::Any1);
@@ -140,7 +156,14 @@ fn covers(a: &[Tok], b: &[Tok], ai: usize, bi: usize, cache: &mut [u8], width: u
     result
 }
 
-fn covers_compute(a: &[Tok], b: &[Tok], ai: usize, bi: usize, cache: &mut [u8], width: usize) -> bool {
+fn covers_compute(
+    a: &[Tok],
+    b: &[Tok],
+    ai: usize,
+    bi: usize,
+    cache: &mut [u8],
+    width: usize,
+) -> bool {
     if ai == a.len() {
         // `a` can now only produce "", so it covers `b` iff `b` is also spent.
         return bi == b.len();

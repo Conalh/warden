@@ -22,7 +22,11 @@ const BP_AND: u8 = 3;
 const MAX_EXPR_DEPTH: u32 = 256;
 
 pub fn parse_tokens(tokens: Vec<Token>) -> (Policy, Vec<Diagnostic>) {
-    let mut parser = Parser { tokens, pos: 0, diagnostics: Vec::new() };
+    let mut parser = Parser {
+        tokens,
+        pos: 0,
+        diagnostics: Vec::new(),
+    };
     let policy = parser.parse_policy();
     (policy, parser.diagnostics)
 }
@@ -54,7 +58,11 @@ impl Parser {
                 self.advance();
             }
         }
-        Policy { default, mode, rules }
+        Policy {
+            default,
+            mode,
+            rules,
+        }
     }
 
     fn parse_default(&mut self) -> Result<Effect, Diagnostic> {
@@ -70,9 +78,7 @@ impl Parser {
             self.advance();
             Mode::from_ident(name).ok_or_else(|| {
                 Diagnostic::new(
-                    format!(
-                        "unknown mode `{name}` (expected `first_match` or `deny_overrides`)"
-                    ),
+                    format!("unknown mode `{name}` (expected `first_match` or `deny_overrides`)"),
                     token.span,
                 )
             })
@@ -99,7 +105,12 @@ impl Parser {
         } else {
             None
         };
-        Ok(Rule { effect, tool, condition, span: start })
+        Ok(Rule {
+            effect,
+            tool,
+            condition,
+            span: start,
+        })
     }
 
     /// Pratt loop over the logical operators. `depth` bounds recursion so a
@@ -165,12 +176,20 @@ impl Parser {
                     TokenKind::Matches => {
                         self.advance();
                         let (pattern, span) = self.expect_string_span()?;
-                        Ok(Expr::Match { field, pattern, span })
+                        Ok(Expr::Match {
+                            field,
+                            pattern,
+                            span,
+                        })
                     }
                     TokenKind::Contains => {
                         self.advance();
                         let (needle, span) = self.expect_string_span()?;
-                        Ok(Expr::Contains { field, needle, span })
+                        Ok(Expr::Contains {
+                            field,
+                            needle,
+                            span,
+                        })
                     }
                     _ => Err(Diagnostic::new(
                         format!(
@@ -245,7 +264,11 @@ impl Parser {
         } else {
             let token = self.peek_token();
             Err(Diagnostic::new(
-                format!("expected {}, found {}", kind.describe(), token.kind.describe()),
+                format!(
+                    "expected {}, found {}",
+                    kind.describe(),
+                    token.kind.describe()
+                ),
                 token.span,
             ))
         }
@@ -293,7 +316,11 @@ mod tests {
         let (tokens, lex_diags) = Lexer::new(src).tokenize();
         assert!(lex_diags.is_empty(), "lex errors: {lex_diags:?}");
         let (policy, diags) = parse_tokens(tokens);
-        if diags.is_empty() { Ok(policy) } else { Err(diags) }
+        if diags.is_empty() {
+            Ok(policy)
+        } else {
+            Err(diags)
+        }
     }
 
     #[test]
@@ -329,7 +356,8 @@ mod tests {
     #[test]
     fn not_binds_tightest() {
         // not a and b  ==>  (not a) and b
-        let policy = parse(r#"deny tool("x") when not path matches "a" and path matches "b""#).unwrap();
+        let policy =
+            parse(r#"deny tool("x") when not path matches "a" and path matches "b""#).unwrap();
         let cond = policy.rules[0].condition.clone().unwrap();
         match cond {
             Expr::And(lhs, _) => assert!(matches!(*lhs, Expr::Not(_))),
@@ -372,7 +400,11 @@ mod tests {
     fn rejects_unknown_mode() {
         let err = parse(r#"mode deny_overide"#).unwrap_err();
         assert_eq!(err.len(), 1);
-        assert!(err[0].message.contains("unknown mode"), "got: {}", err[0].message);
+        assert!(
+            err[0].message.contains("unknown mode"),
+            "got: {}",
+            err[0].message
+        );
     }
 
     #[test]

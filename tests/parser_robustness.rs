@@ -74,7 +74,9 @@ fn handcrafted_adversarial_inputs_do_not_panic() {
     let deep_parens = "(".repeat(50_000);
     assert_parse_does_not_panic(&format!("deny tool(\"x\") when {deep_parens}"));
     let deep_not = "not ".repeat(50_000);
-    assert_parse_does_not_panic(&format!("deny tool(\"x\") when {deep_not}path matches \"a\""));
+    assert_parse_does_not_panic(&format!(
+        "deny tool(\"x\") when {deep_not}path matches \"a\""
+    ));
     let many_rules = "allow tool(\"x\")\n".repeat(20_000);
     assert_parse_does_not_panic(&many_rules);
 }
@@ -84,11 +86,46 @@ fn generated_token_soup_does_not_panic() {
     // Fragments biased toward real DSL tokens so the generator reaches deep
     // parser states, not just lexer rejections.
     const FRAGMENTS: &[&str] = &[
-        "allow ", "deny ", "ask ", "tool", "when ", "path ", "command ",
-        "matches ", "contains ", "and ", "or ", "not ", "default ", "mode ",
-        "first_match", "deny_overrides", "(", ")", "\"", "*", "**", "?", "/",
-        ".", "-", "\n", " ", "\t", "src", "env", "rm -rf", "\\", "#c\n",
-        "tool(\"", "\")", "x", "0", "\0", "é", "漢",
+        "allow ",
+        "deny ",
+        "ask ",
+        "tool",
+        "when ",
+        "path ",
+        "command ",
+        "matches ",
+        "contains ",
+        "and ",
+        "or ",
+        "not ",
+        "default ",
+        "mode ",
+        "first_match",
+        "deny_overrides",
+        "(",
+        ")",
+        "\"",
+        "*",
+        "**",
+        "?",
+        "/",
+        ".",
+        "-",
+        "\n",
+        " ",
+        "\t",
+        "src",
+        "env",
+        "rm -rf",
+        "\\",
+        "#c\n",
+        "tool(\"",
+        "\")",
+        "x",
+        "0",
+        "\0",
+        "é",
+        "漢",
     ];
     let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
     let mut input = String::new();

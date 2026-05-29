@@ -65,7 +65,9 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         // Unreachable-rule analysis is a first-match notion; under
         // deny-overrides a later `deny` can still win, so we don't run it.
         if policy.mode != Mode::FirstMatch {
-            println!("policy ok: unreachable-rule analysis applies to `first_match` only; skipped.");
+            println!(
+                "policy ok: unreachable-rule analysis applies to `first_match` only; skipped."
+            );
             return Ok(ExitCode::SUCCESS);
         }
         let lints = warden::find_shadowed(&policy);
@@ -74,7 +76,10 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             return Ok(ExitCode::SUCCESS);
         }
         for lint in &lints {
-            eprintln!("{}\n", lint.to_diagnostic().render_labeled(&source, "warning"));
+            eprintln!(
+                "{}\n",
+                lint.to_diagnostic().render_labeled(&source, "warning")
+            );
         }
         eprintln!("{} unreachable rule(s) found.", lints.len());
         return Ok(ExitCode::from(3));
