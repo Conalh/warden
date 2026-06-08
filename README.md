@@ -16,16 +16,20 @@ source ──▶ [lexer] ──▶ tokens ──▶ [parser] ──▶ AST (Poli
 
 ## Where this fits
 
-warden isn't meant to be wired into a stack as "another policy engine." It's the
-deterministic decision core that the
-[agent-gov suite](https://github.com/Conalh/agent-gov-core) routes agent actions
-through. Enforcement lives in
-**[Barbican](https://github.com/Conalh/barbican)**, an MCP stdio proxy that sits
-in the tool-use loop and consults a single long-lived `warden --stdin` process on
-every `tools/call`, getting back `allow` / `deny` / `ask` as JSON before the call
-is let through. Most agents expose no policy hook to register against — so
-Barbican *is* the hook: it interposes rather than plugging in. warden on its own
-is the engine and the language; Barbican is what gives it a runtime surface.
+warden is the suite's **decision** core — it answers allow / deny / ask for one tool action, and it is the only piece that makes that call.
+
+| Tool | Input | Catches / decides | Output | Use when |
+|---|---|---|---|---|
+| **warden** | policy + tool action | allow / deny / ask | verdict | you need deterministic runtime policy decisions |
+| [barbican](https://github.com/Conalh/barbican) | MCP tools/list + tools/call | denied calls, ask handling, tool poisoning | enforced MCP proxy + reports | you need MCP runtime enforcement |
+| [ScopeTrail](https://github.com/Conalh/ScopeTrail) | PR base/head agent config | permission/config drift | annotations + report | a PR changes agent config |
+| [PolicyMesh](https://github.com/Conalh/PolicyMesh) | current repo policy/config files | contradictory rules across agent surfaces | report / SARIF | current policy is inconsistent |
+| [CapabilityEcho](https://github.com/Conalh/CapabilityEcho) | PR diff | new executable capability | annotations + report | code gains network/subprocess/eval/lifecycle/workflow power |
+| [TaskBound](https://github.com/Conalh/TaskBound) | stated task + PR diff | scope creep | annotations + report | an agent may have gone off-task |
+| [SessionTrail](https://github.com/Conalh/SessionTrail) | Cursor/Claude/Codex JSONL transcripts | risky runtime behavior | report / SARIF | an agent session already ran |
+| [GovVerdict](https://github.com/Conalh/GovVerdict) | JSON reports | deduped suite verdict | merged report | you want one final review verdict |
+| [AgentPulse](https://github.com/Conalh/AgentPulse) | live session events | trajectory state | terminal dashboard | you want live session observation |
+| [agent-gov-core](https://github.com/Conalh/agent-gov-core) | shared schemas/parsers | common Finding/Report model | library | tools need shared report primitives |
 
 ## Cross-client policy — and what it doesn't cover
 
