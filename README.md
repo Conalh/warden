@@ -1,7 +1,18 @@
 # warden
 
-You write a small declarative policy; `warden` decides whether an agent's action
-should be **allowed**, **denied**, or escalated to a human (**ask**).
+[![Rust](https://img.shields.io/badge/Rust-2021-orange?logo=rust&logoColor=white)](Cargo.toml) [![runtime deps](https://img.shields.io/badge/runtime%20deps-0-2ea44f)](Cargo.toml) [![wasm playground](https://img.shields.io/badge/wasm-live%20playground-654ff0?logo=webassembly&logoColor=white)](https://conalh.github.io/warden/) [![no LLM](https://img.shields.io/badge/decision%20path-no%20LLM-0c4a6e)](#where-this-fits) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+**You write a small declarative policy; `warden` decides whether an agent's action is allowed, denied, or escalated to a human (ask)** — a from-scratch, zero-dependency engine with no LLM in the decision path.
+
+<!-- TODO: add 10s demo GIF here -->
+
+```sh
+cargo run -- examples/agent.warden --tool bash --command "rm -rf /tmp"
+#   decision: DENY
+#   reason:   matched rule 5 (line 16): deny tool("bash") because command "rm -rf /tmp" contains "rm -rf"
+```
+
+▶ Try it in the browser, no install: **[live playground](https://conalh.github.io/warden/)**.
 
 warden is a from-scratch policy language for agent tool-use, built to show the
 fundamentals end to end: a hand-written lexer, a recursive-descent + Pratt
