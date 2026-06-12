@@ -19,6 +19,22 @@ impl Effect {
             Effect::Ask => "ask",
         }
     }
+
+    /// How strongly this effect constrains the action: `deny` blocks outright,
+    /// `ask` escalates to a human, `allow` is the most permissive. A higher rank
+    /// is *more restrictive*.
+    ///
+    /// This is the precedence `deny_overrides` resolves by, and it is also what
+    /// lets the shadow analysis tell a harmless redundancy from a dangerous one:
+    /// a dead rule that is *more* restrictive than the rule shadowing it means a
+    /// control the author wrote is silently not enforced.
+    pub fn restrictiveness(self) -> u8 {
+        match self {
+            Effect::Deny => 2,
+            Effect::Ask => 1,
+            Effect::Allow => 0,
+        }
+    }
 }
 
 /// How matching rules are combined into a verdict.
@@ -52,6 +68,22 @@ impl Mode {
     }
 }
 
+/// Whether `/` is structural in a glob. `path` is a filesystem path, so `/` is a
+/// hard segment boundary (gitignore semantics: a lone `*`/`?` never crosses it).
+/// `command` is a shell string where `/` is just an ordinary argument character,
+/// so globs there are *flat* — a lone `*` spans `/` and `?` matches it.
+///
+/// Tying the scope to the field this way stops `command matches "git *"` from
+/// silently failing to match `git clone a/b`: the `*` is not segment-bounded
+/// where `/` carries no structural meaning.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GlobScope {
+    /// `/` is a segment boundary (`path`).
+    Segmented,
+    /// `/` is an ordinary character (`command`).
+    Flat,
+}
+
 /// A field of the action context that a predicate can inspect. Keeping this a
 /// closed enum (rather than an arbitrary string) is what lets the parser
 /// reject `paht matches "..."` at parse time instead of silently never firing.
@@ -74,6 +106,15 @@ impl Field {
         match self {
             Field::Path => "path",
             Field::Command => "command",
+        }
+    }
+
+    /// Which glob semantics `matches` uses against this field. `path` is
+    /// segment-aware; `command` is flat (see [`GlobScope`]).
+    pub fn glob_scope(self) -> GlobScope {
+        match self {
+            Field::Path => GlobScope::Segmented,
+            Field::Command => GlobScope::Flat,
         }
     }
 }

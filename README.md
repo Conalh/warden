@@ -120,9 +120,14 @@ ask   tool("write") when path matches "**/*.json" and not path matches "package.
 - **Predicates:** `<field> matches "<glob>"` and `<field> contains "<substring>"`,
   where `<field>` is `path` or `command`.
 - **Operators:** `not` (tightest) → `and` → `or` (loosest); parenthesize to override.
-- **Globs:** `/` is a segment boundary (gitignore-style): `*` matches a run
-  within one segment, `**` spans `/`, `?` is one non-`/` char. So `src/*`
-  matches `src/main.rs` but not `src/a/b.rs`, while `src/**` matches both.
+- **Globs:** the meaning of `/` depends on the field. For **`path`** it is a
+  segment boundary (gitignore-style): `*` matches a run within one segment, `**`
+  spans `/`, `?` is one non-`/` char — so `src/*` matches `src/main.rs` but not
+  `src/a/b.rs`, while `src/**` matches both. For **`command`** `/` is an ordinary
+  argument character with no structural meaning, so globs there are *flat*: a
+  lone `*` spans `/` and `?` matches it. That is why `command matches "git *"`
+  matches `git clone a/b` — a segment-bounded `*` would silently miss it. (Tool
+  globs in `tool("…")` use the segmented rules, but tool names contain no `/`.)
   `#` starts a comment.
 - **Combining mode (optional):** a top-level `mode first_match` (default) or
   `mode deny_overrides` directive — see below.
@@ -155,19 +160,29 @@ cargo run -- examples/deny_overrides.warden --tool read --path config/.env.local
 ```
 
 Because resolution no longer depends on order, the unreachable-rule lint below
-(a *first-match* notion) does not apply under `deny_overrides`, and `warden`
-skips it rather than report false positives.
+(a *first-match* notion) does not apply under `deny_overrides`. A different dead
+rule shows up there instead — a *redundant* one — and `warden` lints for it; see
+[Redundant rules](#linting-redundant-rules-under-deny_overrides) below.
 
 ## Linting: unreachable rules
 
 Because resolution is first-match-wins, a rule is **dead** if an earlier rule
 always matches first. `warden` finds these statically — running it on a policy
-(no action) reports every shadowed rule and exits `3`:
+(no action) reports every shadowed rule and exits `3`.
+
+Not every dead rule is equally bad, so each carries a **severity**. A rule
+shadowed by an *at-least-as-restrictive* cover is harmless `redundant` dead
+code. But a rule that is **stricter** than the rule eating it — a `deny`/`ask`
+shadowed by a broader `allow` — is `dangerous`: a control the author wrote that
+is silently **not enforced**. The classic case is a catch-all `allow read`
+sitting above a `deny read when path matches "**/.env*"`, which makes the secrets
+denial inert (the read returns ALLOW). That is the one a policy author most needs
+to see, so it is labelled `danger` and called out in the summary:
 
 ```text
 $ warden examples/shadowed.warden
 8 rule(s), default `ask`, mode `first_match`
-warning: unreachable rule: rule 1 at line 8 (an unconditional `allow tool("read")`) always matches first
+danger: dangerous unreachable rule: rule 1 at line 8 (an unconditional `allow tool("read")`) always matches first, so this stricter `deny` never fires — the control it expresses is not enforced
    --> line 10, col 1
    |
 10 | deny  tool("read") when path matches "**/.env*"
@@ -191,8 +206,11 @@ warning: unreachable rule: rule 7 at line 23 (an unconditional catch-all `ask to
 25 | allow tool("browse") when path matches "**"
    | ^^^^^
 
-4 unreachable rule(s) found.
+4 unreachable rule(s) found, 1 of them dangerous (a stricter control silently not enforced).
 ```
+
+The `--json` mode carries the same `severity` on each entry of the `unreachable`
+array (`"dangerous"` or `"redundant"`).
 
 [`examples/shadowed.warden`](examples/shadowed.warden) packs one of each shadow
 mechanism the analysis understands: an unconditional rule swallowing a later
@@ -200,12 +218,37 @@ conditional one, a broad glob subsuming a narrower one (`**` over `src/**`), a
 shorter `contains` substring covering a longer one (`"rm"` over `"rm -rf"`), and
 a `tool("*")` catch-all killing everything after it.
 
-The analysis is **sound, not complete**: every rule it flags is genuinely
-unreachable (no false positives), but it reasons pairwise — about one covering
-rule at a time, with conservative glob subsumption — so it may miss deadness
-that only emerges from the *union* of several earlier rules. In a linter, a
-false "this rule is dead" is far worse than a missed one. See
-[`src/analysis.rs`](src/analysis.rs).
+## Linting: redundant rules (under `deny_overrides`)
+
+Under `deny_overrides` order is not priority, so the shadow notion above does not
+apply. The analogous dead rule is a **redundant** one: a rule some *other* rule
+*dominates* — matches everything it does, and is at least as restrictive — so it
+can never change the verdict. Running `warden` on a `deny_overrides` policy
+reports these and exits `3`:
+
+```text
+$ warden examples/redundant.warden
+4 rule(s), default `ask`, mode `deny_overrides`
+warning: redundant rule: a broader rule (`deny tool("*")`) at line 14 already decides every action this matches (deny_overrides), so this rule never changes the verdict
+   --> line 18, col 1
+   |
+18 | allow tool("read") when path matches "**/.env*"
+   | ^^^^^
+...
+2 redundant rule(s) found.
+```
+
+[`examples/redundant.warden`](examples/redundant.warden) shows an `allow` whose
+whole match-set sits under a broader `deny` (it can never win) and an exact
+duplicate (dead weight). A redundant rule is always harmless `redundant`
+severity — domination requires the dominating effect to be at least as
+restrictive, so the verdict is already at least as strict.
+
+Both analyses are **sound, not complete**: every rule flagged is genuinely dead
+(no false positives), but they reason pairwise — about one covering or dominating
+rule at a time, with conservative glob subsumption — so they miss deadness that
+only emerges from the *union* of several rules. In a linter, a false "this rule
+is dead" is far worse than a missed one. See [`src/analysis.rs`](src/analysis.rs).
 
 ## Self-tests
 
@@ -328,7 +371,7 @@ per precedence level — see [`src/parser.rs`](src/parser.rs).
 | [`parser.rs`](src/parser.rs) | Recursive descent + Pratt; error recovery |
 | [`eval.rs`](src/eval.rs) | Tree-walking evaluator, first-match resolution |
 | [`selftest.rs`](src/selftest.rs) | Runs inline `test` expectations against the policy |
-| [`analysis.rs`](src/analysis.rs) | Static detection of unreachable (shadowed) rules |
+| [`analysis.rs`](src/analysis.rs) | Static deadness lints: shadowed rules (first-match, severity-classified) and dominated/redundant rules (deny-overrides) |
 | [`json.rs`](src/json.rs) | Minimal zero-dep JSON: writer for `--json`, total parser for `--stdin` |
 | [`matcher.rs`](src/matcher.rs) | Backtracking glob matcher |
 | [`diagnostics.rs`](src/diagnostics.rs) | Spans + rustc-style caret rendering |
@@ -353,15 +396,20 @@ per precedence level — see [`src/parser.rs`](src/parser.rs).
 ## Roadmap
 
 - **Done:** **conflict/shadow detection** — static reachability analysis that
-  flags rules an earlier rule already subsumes (see above). **Decision trace** —
-  the verdict resolves `when <condition>` down to the leaf predicate that fired,
-  with concrete values (`command "rm -rf /tmp" contains "rm -rf"`).
+  flags rules an earlier rule already subsumes, **classified by severity** so a
+  stricter control silently eaten by a broader `allow` reads as `dangerous`, not
+  generic dead code (see above). **Redundant-rule lint under deny-overrides** —
+  the order-independent analogue: a rule dominated by an at-least-as-restrictive
+  match can never change the verdict, and is flagged (see above). **Decision
+  trace** — the verdict resolves `when <condition>` down to the leaf predicate
+  that fired, with concrete values (`command "rm -rf /tmp" contains "rm -rf"`).
   **`deny`-overrides** — opt-in combining mode where the most restrictive
-  matching rule wins, order-independent. **Segment-aware globs** — `/` is a
-  hard boundary; `*` stays within a path segment while `**` spans them.
+  matching rule wins, order-independent. **Field-aware globs** — `path` treats
+  `/` as a hard segment boundary (`*` stays within a segment, `**` spans them)
+  while `command` is flat, since `/` is just an argument character there.
   **Richer glob subsumption** — the shadow analysis decides glob *language
-  inclusion* with the same segment rules, so `**` is recognized as covering
-  `src/**` while a single `*` is not. **Parser fuzzing** — a libFuzzer harness
+  inclusion* under the same per-field scope, so `**` covers `src/**` (and a lone
+  `*` does not) on paths, while command globs subsume flatly. **Parser fuzzing** — a libFuzzer harness
   and a depth guard that make the parser provably total (see below).
   **In-browser playground** — a `wasm-bindgen` build of the engine, with the
   glue isolated in a detached crate so the core stays zero-dependency (see

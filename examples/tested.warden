@@ -19,4 +19,7 @@ test deny  tool("read")  path "config/.env.local"
 test allow tool("read")  path "src/main.rs"
 test deny  tool("bash")  command "rm -rf /tmp"
 test allow tool("bash")  command "git status"
+# `command` globs are flat: `/` is an ordinary argument char, so the lone `*`
+# in `git *` spans it and this slashed git command is allowed, not dropped.
+test allow tool("bash")  command "git clone https://h/r"
 test ask   tool("write") path "notes.txt"        # nothing matches -> default ask

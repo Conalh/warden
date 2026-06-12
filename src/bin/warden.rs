@@ -229,10 +229,10 @@ fn error_json(message: &str) -> String {
     Json::object(vec![("status", "error".into()), ("error", message.into())]).render()
 }
 
-/// Validate mode (no action given): print the summary, run the unreachable-rule
-/// lint (first-match policies only) and any inline self-tests, then return the
-/// most serious exit code — `4` if a self-test failed, else `3` for unreachable
-/// rules, else `0`.
+/// Validate mode (no action given): print the summary, run the deadness lint
+/// (unreachable rules under `first_match`, dominated/redundant rules under
+/// `deny_overrides`) and any inline self-tests, then return the most serious
+/// exit code — `4` if a self-test failed, else `3` for a dead rule, else `0`.
 fn validate(policy: &Policy, source: &str, json: bool) -> ExitCode {
     if json {
         return validate_json(policy);
@@ -247,24 +247,39 @@ fn validate(policy: &Policy, source: &str, json: bool) -> ExitCode {
 
     let mut exit = 0u8;
 
-    // Unreachable-rule analysis is a first-match notion; under deny-overrides a
-    // later `deny` can still win, so we don't run it.
-    if policy.mode == Mode::FirstMatch {
-        let lints = warden::find_shadowed(policy);
-        if lints.is_empty() {
-            println!("policy ok: no unreachable rules.");
-        } else {
-            for lint in &lints {
-                eprintln!(
-                    "{}\n",
-                    lint.to_diagnostic().render_labeled(source, "warning")
-                );
-            }
-            eprintln!("{} unreachable rule(s) found.", lints.len());
-            exit = 3;
-        }
+    // Both modes get a deadness lint, but a different one: `first_match` order
+    // *is* priority so a later rule can be shadowed, while `deny_overrides`
+    // resolves by restrictiveness so the analogous dead rule is one dominated by
+    // an at-least-as-restrictive match (see the two analysis entry points).
+    let (lints, noun) = match policy.mode {
+        Mode::FirstMatch => (warden::find_shadowed(policy), "unreachable"),
+        Mode::DenyOverrides => (warden::find_redundant(policy), "redundant"),
+    };
+    if lints.is_empty() {
+        println!("policy ok: no {noun} rules.");
     } else {
-        println!("policy ok: unreachable-rule analysis applies to `first_match` only; skipped.");
+        for lint in &lints {
+            // Surface a dropped control more loudly than dead code.
+            let label = match lint.severity {
+                warden::Severity::Dangerous => "danger",
+                warden::Severity::Redundant => "warning",
+            };
+            eprintln!("{}\n", lint.to_diagnostic().render_labeled(source, label));
+        }
+        let dangerous = lints
+            .iter()
+            .filter(|l| l.severity == warden::Severity::Dangerous)
+            .count();
+        if dangerous > 0 {
+            eprintln!(
+                "{} {noun} rule(s) found, {dangerous} of them dangerous (a stricter \
+                 control silently not enforced).",
+                lints.len()
+            );
+        } else {
+            eprintln!("{} {noun} rule(s) found.", lints.len());
+        }
+        exit = 3;
     }
 
     // Self-tests run in every mode — a deny_overrides policy benefits just as much.
@@ -285,27 +300,30 @@ fn validate_json(policy: &Policy) -> ExitCode {
     let mut exit = 0u8;
     let mut status = "ok";
 
-    // Unreachable analysis is first-match-only, same as the human path.
-    let unreachable: Vec<Json> = if policy.mode == Mode::FirstMatch {
-        let lints = warden::find_shadowed(policy);
-        if !lints.is_empty() {
-            exit = 3;
-            status = "warning";
-        }
-        lints
-            .iter()
-            .map(|lint| {
-                Json::object(vec![
-                    ("rule", Json::Int(lint.rule as i64 + 1)),
-                    ("coveredBy", Json::Int(lint.covered_by as i64 + 1)),
-                    ("message", lint.message.as_str().into()),
-                    ("line", Json::Int(lint.span.line as i64)),
-                ])
-            })
-            .collect()
-    } else {
-        Vec::new()
+    // Same mode-aware deadness lint as the human path: shadow under first-match,
+    // domination under deny-overrides. The JSON key stays `unreachable` for
+    // backward compatibility; each entry carries a `severity` distinguishing a
+    // dropped control (`dangerous`) from harmless dead code (`redundant`).
+    let lints = match policy.mode {
+        Mode::FirstMatch => warden::find_shadowed(policy),
+        Mode::DenyOverrides => warden::find_redundant(policy),
     };
+    if !lints.is_empty() {
+        exit = 3;
+        status = "warning";
+    }
+    let unreachable: Vec<Json> = lints
+        .iter()
+        .map(|lint| {
+            Json::object(vec![
+                ("rule", Json::Int(lint.rule as i64 + 1)),
+                ("coveredBy", Json::Int(lint.covered_by as i64 + 1)),
+                ("severity", lint.severity.as_str().into()),
+                ("message", lint.message.as_str().into()),
+                ("line", Json::Int(lint.span.line as i64)),
+            ])
+        })
+        .collect();
 
     let outcomes = warden::run_tests(policy);
     if outcomes.iter().any(|o| !o.passed) {

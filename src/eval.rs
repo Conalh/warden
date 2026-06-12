@@ -3,7 +3,7 @@
 //! default. This is first-match-wins resolution — the simplest semantics that
 //! is still predictable. (`deny`-overrides is a planned v1 toggle.)
 
-use crate::ast::{Effect, Expr, Field, Mode, Policy, Rule};
+use crate::ast::{Effect, Expr, Field, GlobScope, Mode, Policy, Rule};
 use crate::matcher::glob_match;
 
 /// The action an agent wants to take, evaluated against a policy.
@@ -84,19 +84,23 @@ fn evaluate_deny_overrides(policy: &Policy, action: &Action) -> Verdict {
         .filter(|(_, rule)| rule_matches(rule, action))
         .collect();
 
-    let Some(top) = matches.iter().map(|(_, r)| restrictiveness(r.effect)).max() else {
+    let Some(top) = matches
+        .iter()
+        .map(|(_, r)| r.effect.restrictiveness())
+        .max()
+    else {
         return default_verdict(policy);
     };
 
     // Earliest rule carrying the winning effect — stable, intuitive to trace.
     let (index, rule) = matches
         .iter()
-        .find(|(_, r)| restrictiveness(r.effect) == top)
+        .find(|(_, r)| r.effect.restrictiveness() == top)
         .unwrap();
     let mut explanation = explain(*index, rule, action);
     if let Some((over_idx, over)) = matches
         .iter()
-        .find(|(_, r)| restrictiveness(r.effect) < top)
+        .find(|(_, r)| r.effect.restrictiveness() < top)
     {
         explanation += &format!(
             "; under deny_overrides this beats rule {} ({} tool(\"{}\"))",
@@ -125,22 +129,13 @@ fn default_verdict(policy: &Policy) -> Verdict {
 
 /// Does this rule's tool glob and (optional) condition both hold for the action?
 fn rule_matches(rule: &Rule, action: &Action) -> bool {
-    glob_match(&rule.tool, &action.tool)
+    // Tool names are flat identifiers, not paths, so they match under segmented
+    // scope where `*` behaves as a plain wildcard (no `/` to cross anyway).
+    glob_match(&rule.tool, &action.tool, GlobScope::Segmented)
         && match &rule.condition {
             None => true,
             Some(expr) => eval_expr(expr, action),
         }
-}
-
-/// How strongly an effect constrains the action, for `deny_overrides`. A higher
-/// rank wins: `deny` blocks outright, `ask` escalates to a human, `allow` is
-/// the most permissive.
-fn restrictiveness(effect: Effect) -> u8 {
-    match effect {
-        Effect::Deny => 2,
-        Effect::Ask => 1,
-        Effect::Allow => 0,
-    }
 }
 
 fn eval_expr(expr: &Expr, action: &Action) -> bool {
@@ -150,7 +145,7 @@ fn eval_expr(expr: &Expr, action: &Action) -> bool {
         Expr::Not(inner) => !eval_expr(inner, action),
         Expr::Match { field, pattern, .. } => action
             .field(*field)
-            .is_some_and(|value| glob_match(pattern, value)),
+            .is_some_and(|value| glob_match(pattern, value, field.glob_scope())),
         Expr::Contains { field, needle, .. } => action
             .field(*field)
             .is_some_and(|value| value.contains(needle.as_str())),

@@ -213,12 +213,20 @@ fn shadowed_example_flags_dead_rules() {
 /// Run the compiled `warden` binary and return its stdout and exit code. Cargo
 /// builds the binary before this test and hands us its path via the env var.
 fn cli(args: &[&str]) -> (String, i32) {
+    let (stdout, _stderr, code) = cli_io(args);
+    (stdout, code)
+}
+
+/// Like [`cli`], but also return stderr — where the human-readable lint
+/// diagnostics and summary are written.
+fn cli_io(args: &[&str]) -> (String, String, i32) {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_warden"))
         .args(args)
         .output()
         .expect("failed to run the warden binary");
     (
         String::from_utf8(output.stdout).expect("stdout should be utf-8"),
+        String::from_utf8(output.stderr).expect("stderr should be utf-8"),
         output.status.code().expect("process should return a code"),
     )
 }
@@ -341,6 +349,46 @@ fn json_validate_flags_unreachable_with_warning_status() {
     assert!(stdout.contains(r#""status":"warning""#), "got: {stdout}");
     assert!(
         stdout.contains(r#""unreachable":[{"rule":2,"coveredBy":1"#),
+        "got: {stdout}"
+    );
+    // Each lint carries a severity; the first shadow in the example is a
+    // stricter `deny` eaten by a broader `allow`, i.e. a dropped control.
+    assert!(
+        stdout.contains(r#""severity":"dangerous""#),
+        "a dropped control should be flagged dangerous: {stdout}"
+    );
+    assert!(
+        stdout.contains(r#""severity":"redundant""#),
+        "the harmless shadows should be flagged redundant: {stdout}"
+    );
+}
+
+#[test]
+fn dangerous_shadow_is_called_out_in_human_output() {
+    // Lint diagnostics and the summary are written to stderr.
+    let (_stdout, stderr, code) = cli_io(&["examples/shadowed.warden"]);
+    assert_eq!(code, 3);
+    // The summary names the dangerous count, and the lint uses a `danger` label.
+    assert!(stderr.contains("1 of them dangerous"), "got: {stderr}");
+    assert!(stderr.contains("danger:"), "got: {stderr}");
+}
+
+#[test]
+fn deny_overrides_redundant_rules_exit_3() {
+    // Under deny-overrides the lint switches to redundancy (domination) rather
+    // than first-match shadowing, and still flags dead rules with exit 3.
+    let (_stdout, stderr, code) = cli_io(&["examples/redundant.warden"]);
+    assert_eq!(code, 3, "a dominated rule exits 3");
+    assert!(stderr.contains("redundant rule(s) found"), "got: {stderr}");
+}
+
+#[test]
+fn json_validate_redundant_under_deny_overrides() {
+    let (stdout, code) = cli(&["examples/redundant.warden", "--json"]);
+    assert_eq!(code, 3);
+    assert!(stdout.contains(r#""status":"warning""#), "got: {stdout}");
+    assert!(
+        stdout.contains(r#""severity":"redundant""#),
         "got: {stdout}"
     );
 }

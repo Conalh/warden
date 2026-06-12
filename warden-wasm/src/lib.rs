@@ -79,24 +79,25 @@ pub fn validate(source: &str) -> Report {
     // outranks a clean bill of health — same precedence as the CLI's exit code.
     let mut status = Status::Ok;
 
-    // The unreachable-rule lint is a first-match notion; under deny-overrides a
-    // later `deny` can still win, so we skip it — same as the CLI.
-    if policy.mode == Mode::FirstMatch {
-        let lints = warden::find_shadowed(&policy);
-        if lints.is_empty() {
-            text.push_str("\npolicy ok: no unreachable rules.");
-        } else {
-            for lint in &lints {
-                text.push_str("\n\n");
-                text.push_str(&lint.to_diagnostic().render_labeled(source, "warning"));
-            }
-            text.push_str(&format!("\n\n{} unreachable rule(s) found.", lints.len()));
-            status = Status::Warning;
-        }
+    // Mode-aware deadness lint, mirroring the CLI: shadowed rules under
+    // first-match, dominated/redundant rules under deny-overrides.
+    let (lints, noun) = match policy.mode {
+        Mode::FirstMatch => (warden::find_shadowed(&policy), "unreachable"),
+        Mode::DenyOverrides => (warden::find_redundant(&policy), "redundant"),
+    };
+    if lints.is_empty() {
+        text.push_str(&format!("\npolicy ok: no {noun} rules."));
     } else {
-        text.push_str(
-            "\npolicy ok: unreachable-rule analysis applies to `first_match` only; skipped.",
-        );
+        for lint in &lints {
+            let label = match lint.severity {
+                warden::Severity::Dangerous => "danger",
+                warden::Severity::Redundant => "warning",
+            };
+            text.push_str("\n\n");
+            text.push_str(&lint.to_diagnostic().render_labeled(source, label));
+        }
+        text.push_str(&format!("\n\n{} {noun} rule(s) found.", lints.len()));
+        status = Status::Warning;
     }
 
     // Self-tests run in every mode — a deny_overrides policy benefits just as much.

@@ -1,28 +1,71 @@
-//! Static analysis: find rules that can never fire.
+//! Static analysis: find rules that can never affect a verdict.
 //!
-//! Because resolution is first-match-wins, a rule is **unreachable** if some
-//! earlier rule always matches whenever it would. We check this *pairwise*: a
-//! later rule `R` is shadowed if there is an earlier rule `E` whose match-set
-//! is a superset of `R`'s.
+//! There are two notions of deadness, one per combining mode:
 //!
-//! The analysis is deliberately **sound, not complete**: every reported rule
+//! - Under **first-match**, a rule is *unreachable* if some earlier rule always
+//!   matches whenever it would ([`find_shadowed`]). We check this *pairwise*: a
+//!   later rule `R` is shadowed if there is an earlier rule `E` whose match-set
+//!   is a superset of `R`'s.
+//! - Under **deny-overrides**, order is not priority, so instead a rule is
+//!   *redundant* if some other rule *dominates* it — matches everything it does
+//!   and is at least as restrictive ([`find_redundant`]).
+//!
+//! Each dead rule carries a [`Severity`]. The one that matters is the
+//! first-match case where a stricter `deny`/`ask` is shadowed by a broader
+//! `allow`: that is a control silently not enforced, flagged [`Severity::Dangerous`]
+//! rather than as generic dead code.
+//!
+//! Both analyses are deliberately **sound, not complete**: every reported rule
 //! is genuinely dead (no false positives), but some dead rules may go
-//! unreported. In particular we only reason about a single covering rule, not
-//! the union of several, and tool-glob subsumption is decided conservatively.
-//! A false "this rule is dead" claim would be far worse in a policy linter
-//! than a missed one, so we err toward silence.
+//! unreported. In particular we only reason about a single covering/dominating
+//! rule, not the union of several, and glob subsumption is decided
+//! conservatively. A false "this rule is dead" claim would be far worse in a
+//! policy linter than a missed one, so we err toward silence.
 
-use crate::ast::{Expr, Policy, Rule};
+use crate::ast::{Expr, GlobScope, Policy, Rule};
 use crate::diagnostics::{Diagnostic, Span};
 use crate::matcher::glob_subsumes;
 
-/// One unreachable rule and the earlier rule that shadows it.
+/// How much a dead rule actually matters.
+///
+/// A linter that prints one undifferentiated "unreachable" for every dead rule
+/// buries the one case that is a security hole. We split them: a rule shadowed
+/// by a cover that is *at least as restrictive* is merely [`Severity::Redundant`]
+/// dead code, but a rule **more** restrictive than the rule eating it is
+/// [`Severity::Dangerous`] — the author wrote a `deny`/`ask` control that a
+/// broader `allow` silently makes inert, so a restriction they think they have
+/// is not enforced.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Severity {
+    /// The dead rule's effect is already covered by an at-least-as-restrictive
+    /// rule, so removing it changes nothing.
+    Redundant,
+    /// The dead rule is stricter than the rule shadowing it: a control that is
+    /// silently not enforced.
+    Dangerous,
+}
+
+impl Severity {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Severity::Redundant => "redundant",
+            Severity::Dangerous => "dangerous",
+        }
+    }
+}
+
+/// One dead rule and the rule that makes it dead.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Lint {
     /// Index of the dead rule in `Policy::rules`.
     pub rule: usize,
-    /// Index of the earlier rule that always matches first.
+    /// Index of the rule that covers it — under `first_match` the earlier rule
+    /// that always matches first, under `deny_overrides` the rule that dominates
+    /// it.
     pub covered_by: usize,
+    /// Whether this dead rule is harmless redundancy or a silently-dropped
+    /// control. See [`Severity`].
+    pub severity: Severity,
     pub message: String,
     pub span: Span,
 }
@@ -44,10 +87,12 @@ pub fn find_shadowed(policy: &Policy) -> Vec<Lint> {
     for (j, later) in policy.rules.iter().enumerate() {
         for (i, earlier) in policy.rules[..j].iter().enumerate() {
             if subsumes(earlier, later) {
+                let severity = classify(earlier, later);
                 lints.push(Lint {
                     rule: j,
                     covered_by: i,
-                    message: explain(i, earlier),
+                    severity,
+                    message: explain_shadow(i, earlier, later, severity),
                     span: later.span,
                 });
                 break; // one covering rule is enough to prove deadness
@@ -57,6 +102,76 @@ pub fn find_shadowed(policy: &Policy) -> Vec<Lint> {
     lints
 }
 
+/// Find rules that can never change the verdict under [`Mode::DenyOverrides`](crate::Mode).
+///
+/// Order is not priority under deny-overrides, so the first-match shadow notion
+/// does not apply. The analogous deadness is *domination*: a rule `R` is
+/// redundant if some **other** rule `S` matches every action `R` does and is at
+/// least as restrictive (`rank(S) >= rank(R)`). Then for every action `R`
+/// matches, `S` already contributes an effect at least as strong, so the
+/// most-restrictive-wins resolution lands on the same verdict whether or not `R`
+/// is present — `R` is dead weight.
+///
+/// This stays **sound** the same way [`find_shadowed`] does: it only reasons
+/// about a single dominating rule, never the union of several, so it may miss a
+/// redundant rule but never wrongly flags one that matters. Mutually-dominating
+/// duplicates (same match-set, same effect) are reported for all but the first,
+/// so removing every flagged rule still leaves one in place.
+pub fn find_redundant(policy: &Policy) -> Vec<Lint> {
+    let mut lints = Vec::new();
+    for (j, rule) in policy.rules.iter().enumerate() {
+        if let Some(i) = dominator_of(policy, j) {
+            let dom = &policy.rules[i];
+            lints.push(Lint {
+                rule: j,
+                covered_by: i,
+                // Domination requires `rank(dom) >= rank(rule)`, so the verdict
+                // is already at least as restrictive — this is never a dropped
+                // control, only dead weight.
+                severity: Severity::Redundant,
+                message: explain_dominated(dom),
+                span: rule.span,
+            });
+        }
+    }
+    lints
+}
+
+/// Index of a rule that dominates rule `j` (matches everything it does, at least
+/// as restrictive), or `None`. Excludes `j` itself, and breaks ties on
+/// mutually-dominating equal-effect duplicates by keeping the earliest: a later
+/// duplicate is dominated by an earlier one, but not vice versa.
+fn dominator_of(policy: &Policy, j: usize) -> Option<usize> {
+    let rule = &policy.rules[j];
+    for (i, s) in policy.rules.iter().enumerate() {
+        if i == j || !subsumes(s, rule) {
+            continue;
+        }
+        if s.effect.restrictiveness() < rule.effect.restrictiveness() {
+            continue;
+        }
+        // If they dominate each other with equal effect they are duplicates;
+        // flag only the later one so the pair is never both called dead.
+        let mutual =
+            s.effect.restrictiveness() == rule.effect.restrictiveness() && subsumes(rule, s);
+        if mutual && i > j {
+            continue;
+        }
+        return Some(i);
+    }
+    None
+}
+
+/// Is the dead rule stricter than the rule shadowing it (a dropped control), or
+/// merely covered by an at-least-as-restrictive one (harmless)?
+fn classify(cover: &Rule, dead: &Rule) -> Severity {
+    if dead.effect.restrictiveness() > cover.effect.restrictiveness() {
+        Severity::Dangerous
+    } else {
+        Severity::Redundant
+    }
+}
+
 /// Does `earlier` match every action `later` would?
 fn subsumes(earlier: &Rule, later: &Rule) -> bool {
     tool_subsumes(&earlier.tool, &later.tool)
@@ -64,9 +179,10 @@ fn subsumes(earlier: &Rule, later: &Rule) -> bool {
 }
 
 /// Sound check: does glob `a` match every tool string that glob `b` matches?
-/// Delegates to the glob language-inclusion decision in [`crate::matcher`].
+/// Delegates to the glob language-inclusion decision in [`crate::matcher`]. Tool
+/// names are flat identifiers, matched under segmented scope (no `/` to cross).
 fn tool_subsumes(a: &str, b: &str) -> bool {
-    glob_subsumes(a, b)
+    glob_subsumes(a, b, GlobScope::Segmented)
 }
 
 /// Sound check: whenever `later`'s condition holds, does `earlier`'s also hold?
@@ -124,7 +240,9 @@ fn leaf_subsumes(earlier: &Expr, later: &Expr) -> bool {
                 pattern: lp,
                 ..
             },
-        ) => ef == lf && glob_subsumes(ep, lp),
+            // Same field, so either field's glob scope is the right one to read
+            // both patterns under (`command` flat, `path` segmented).
+        ) => ef == lf && glob_subsumes(ep, lp, ef.glob_scope()),
         (
             Expr::Contains {
                 field: ef,
@@ -175,32 +293,61 @@ fn expr_eq(a: &Expr, b: &Expr) -> bool {
     }
 }
 
-fn explain(index: usize, earlier: &Rule) -> String {
-    let kind = if earlier.condition.is_none() {
-        if earlier.tool == "*" {
+/// A short noun phrase naming the covering rule, e.g.
+/// ``an unconditional catch-all `ask tool("*")` `` or ``a broader rule (`deny
+/// tool("write")`)``.
+fn describe(rule: &Rule) -> String {
+    if rule.condition.is_none() {
+        if rule.tool == "*" {
             format!(
                 "an unconditional catch-all `{} tool(\"*\")`",
-                earlier.effect.as_str()
+                rule.effect.as_str()
             )
         } else {
             format!(
                 "an unconditional `{} tool(\"{}\")`",
-                earlier.effect.as_str(),
-                earlier.tool
+                rule.effect.as_str(),
+                rule.tool
             )
         }
     } else {
         format!(
             "a broader rule (`{} tool(\"{}\")`)",
-            earlier.effect.as_str(),
-            earlier.tool
+            rule.effect.as_str(),
+            rule.tool
         )
-    };
-    format!(
-        "unreachable rule: rule {} at line {} ({}) always matches first",
+    }
+}
+
+/// Message for a first-match shadow. A redundant shadow reads as a plain
+/// unreachable warning; a dangerous one spells out that a stricter control is
+/// silently dropped, since that is the case a policy author most needs to see.
+fn explain_shadow(index: usize, earlier: &Rule, later: &Rule, severity: Severity) -> String {
+    let head = format!(
+        "rule {} at line {} ({}) always matches first",
         index + 1,
         earlier.span.line,
-        kind
+        describe(earlier),
+    );
+    match severity {
+        Severity::Redundant => format!("unreachable rule: {head}"),
+        Severity::Dangerous => format!(
+            "dangerous unreachable rule: {head}, so this stricter `{}` never fires \
+             — the control it expresses is not enforced",
+            later.effect.as_str(),
+        ),
+    }
+}
+
+/// Message for a rule dominated under `deny_overrides`. It is reachable but its
+/// effect is always matched-or-beaten by another rule, so it cannot change any
+/// verdict.
+fn explain_dominated(dominator: &Rule) -> String {
+    format!(
+        "redundant rule: {} at line {} already decides every action this matches \
+         (deny_overrides), so this rule never changes the verdict",
+        describe(dominator),
+        dominator.span.line,
     )
 }
 
@@ -212,6 +359,18 @@ mod tests {
     fn shadowed_indices(src: &str) -> Vec<usize> {
         let policy = parse(src).expect("policy should parse");
         find_shadowed(&policy).into_iter().map(|l| l.rule).collect()
+    }
+
+    fn lints(src: &str) -> Vec<Lint> {
+        find_shadowed(&parse(src).expect("policy should parse"))
+    }
+
+    fn redundant_indices(src: &str) -> Vec<usize> {
+        let policy = parse(src).expect("policy should parse");
+        find_redundant(&policy)
+            .into_iter()
+            .map(|l| l.rule)
+            .collect()
     }
 
     #[test]
@@ -368,5 +527,114 @@ mod tests {
         "#,
         );
         assert!(dead.is_empty(), "unexpected shadows: {dead:?}");
+    }
+
+    #[test]
+    fn permissive_cover_over_stricter_rule_is_dangerous() {
+        // A catch-all `allow` eats a later secrets `deny`: the denial is inert.
+        let found = lints(
+            r#"
+            allow tool("read")
+            deny  tool("read") when path matches "**/.env*"
+        "#,
+        );
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].severity, Severity::Dangerous);
+        assert!(
+            found[0].message.contains("not enforced"),
+            "got: {}",
+            found[0].message
+        );
+    }
+
+    #[test]
+    fn equal_or_stricter_cover_is_only_redundant() {
+        // Same effect (pure duplicate) and a stricter cover over a looser rule
+        // are both harmless — the verdict is already at least as restrictive.
+        let same = lints(
+            r#"
+            deny tool("bash") when command contains "rm"
+            deny tool("bash") when command contains "rm -rf"
+        "#,
+        );
+        assert_eq!(same[0].severity, Severity::Redundant);
+
+        let stricter_cover = lints(
+            r#"
+            deny  tool("read") when path matches "**"
+            allow tool("read") when path matches "src/**"
+        "#,
+        );
+        assert_eq!(stricter_cover[0].severity, Severity::Redundant);
+    }
+
+    #[test]
+    fn command_glob_subsumption_is_flat() {
+        // Under flat command scope `git *` covers `git status`, so the second
+        // rule is dead — the `/`-free case already worked, but the point is the
+        // scope used here is the flat one.
+        let dead = shadowed_indices(
+            r#"
+            allow tool("bash") when command matches "git *"
+            allow tool("bash") when command matches "git status"
+        "#,
+        );
+        assert_eq!(dead, vec![1]);
+    }
+
+    #[test]
+    fn redundant_flags_a_dominated_duplicate() {
+        // deny-overrides: two identical allows — the later is redundant.
+        let dead = redundant_indices(
+            r#"
+            mode deny_overrides
+            allow tool("read")
+            allow tool("read")
+        "#,
+        );
+        assert_eq!(dead, vec![1]);
+    }
+
+    #[test]
+    fn redundant_flags_allow_dominated_by_broader_deny() {
+        // An `allow` whose whole match-set is covered by a `deny` can never be
+        // the winning effect, regardless of order.
+        let dead = redundant_indices(
+            r#"
+            mode deny_overrides
+            allow tool("read") when path matches "src/**"
+            deny  tool("read") when path matches "**"
+        "#,
+        );
+        assert_eq!(dead, vec![0]);
+    }
+
+    #[test]
+    fn redundant_spares_a_meaningful_deny() {
+        // The `deny` is the most restrictive thing matching its paths; nothing
+        // dominates it, so it must not be flagged.
+        let dead = redundant_indices(
+            r#"
+            mode deny_overrides
+            allow tool("read")
+            deny  tool("read") when path matches "**/.env*"
+        "#,
+        );
+        assert!(dead.is_empty(), "unexpected redundancies: {dead:?}");
+    }
+
+    #[test]
+    fn redundant_keeps_one_of_three_duplicates() {
+        // Three identical rules: all but the first are redundant, so removing
+        // every flagged rule still leaves one standing.
+        let dead = redundant_indices(
+            r#"
+            mode deny_overrides
+            allow tool("read")
+            allow tool("read")
+            allow tool("read")
+        "#,
+        );
+        assert_eq!(dead, vec![1, 2]);
     }
 }

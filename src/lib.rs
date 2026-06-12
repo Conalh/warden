@@ -35,8 +35,8 @@ mod matcher;
 mod parser;
 mod token;
 
-pub use analysis::{Lint, find_shadowed};
-pub use ast::{Effect, Expr, Field, Mode, Policy, Rule, Test};
+pub use analysis::{Lint, Severity, find_redundant, find_shadowed};
+pub use ast::{Effect, Expr, Field, GlobScope, Mode, Policy, Rule, Test};
 pub use diagnostics::{Diagnostic, Span, render_all};
 pub use eval::{Action, Verdict, evaluate};
 pub use json::Json;

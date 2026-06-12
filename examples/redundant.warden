@@ -1,0 +1,25 @@
+# A deny-overrides policy with rules that can never change the verdict, to
+# exercise `warden`'s redundancy lint. Run:  warden examples/redundant.warden
+#
+# Under `mode deny_overrides` order is not priority — every matching rule is
+# collected and the most restrictive effect wins. So the dead rules here are not
+# "shadowed by an earlier rule" (that is a first-match idea); they are *dominated*:
+# some other rule matches everything they do and is at least as restrictive, so
+# removing them changes nothing.
+
+mode deny_overrides
+default ask
+
+# A broad deny on secrets.
+deny  tool("*")    when path matches "**/.env*"
+
+# (1) An `allow` whose whole match-set sits under that deny can never be the
+# winning effect — the deny always beats it. Dominated by the rule above.
+allow tool("read") when path matches "**/.env*"
+
+# (2) An exact duplicate of a rule already present is dead weight; the later one
+# is flagged so removing it still leaves the control in place.
+deny  tool("*")    when path matches "**/.env*"
+
+# This rule is NOT redundant: nothing else denies plain reads, so it stands.
+deny  tool("read") when path matches "**/id_rsa*"
