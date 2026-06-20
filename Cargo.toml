@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "A policy DSL engine that decides whether an agent action is allowed, denied, or requires confirmation."
 license = "MIT"
-repository = "https://github.com/ConalH/warden"
+repository = "https://github.com/Conalh/warden"
 keywords = ["policy", "dsl", "interpreter", "parser", "agent"]
 categories = ["parser-implementations", "command-line-utilities"]
 
