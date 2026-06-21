@@ -98,6 +98,9 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     };
 
     if stdin {
+        if let Some(code) = validate_stdin_policy(&policy, &source) {
+            return Ok(code);
+        }
         return Ok(run_stdin(&policy));
     }
 
@@ -181,6 +184,77 @@ fn run_stdin(policy: &Policy) -> ExitCode {
         ExitCode::from(1)
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+/// Before `--stdin` becomes a long-lived decision service, make sure the policy
+/// is healthy. Keep success silent so stdout remains a pure verdict stream.
+fn validate_stdin_policy(policy: &Policy, source: &str) -> Option<ExitCode> {
+    let mut exit = 0u8;
+
+    let (lints, noun) = match policy.mode {
+        Mode::FirstMatch => (warden::find_shadowed(policy), "unreachable"),
+        Mode::DenyOverrides => (warden::find_redundant(policy), "redundant"),
+    };
+    if !lints.is_empty() {
+        eprintln!("policy validation failed before --stdin:\n");
+        for lint in &lints {
+            let label = match lint.severity {
+                warden::Severity::Dangerous => "danger",
+                warden::Severity::Redundant => "warning",
+            };
+            eprintln!("{}\n", lint.to_diagnostic().render_labeled(source, label));
+        }
+        let dangerous = lints
+            .iter()
+            .filter(|l| l.severity == warden::Severity::Dangerous)
+            .count();
+        if dangerous > 0 {
+            eprintln!(
+                "{} {noun} rule(s) found, {dangerous} of them dangerous (a stricter \
+                 control silently not enforced).",
+                lints.len()
+            );
+        } else {
+            eprintln!("{} {noun} rule(s) found.", lints.len());
+        }
+        exit = 3;
+    }
+
+    let outcomes = warden::run_tests(policy);
+    let failed = outcomes.iter().filter(|o| !o.passed).count();
+    if failed > 0 {
+        if exit == 0 {
+            eprintln!("policy validation failed before --stdin:\n");
+        } else {
+            eprintln!();
+        }
+        for outcome in &outcomes {
+            if outcome.passed {
+                continue;
+            }
+            eprintln!(
+                "FAIL self-test {}: {} => expected {}, got {}",
+                outcome.number,
+                outcome.action,
+                outcome.expected.as_str(),
+                outcome.actual.as_str()
+            );
+            eprintln!("     reason: {}", outcome.explanation);
+        }
+        eprintln!(
+            "{} self-test(s): {} passed, {} failed.",
+            outcomes.len(),
+            outcomes.len() - failed,
+            failed
+        );
+        exit = 4;
+    }
+
+    if exit == 0 {
+        None
+    } else {
+        Some(ExitCode::from(exit))
     }
 }
 

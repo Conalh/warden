@@ -1,6 +1,6 @@
 # warden
 
-[![Rust](https://img.shields.io/badge/Rust-2021-orange?logo=rust&logoColor=white)](Cargo.toml) [![runtime deps](https://img.shields.io/badge/runtime%20deps-0-2ea44f)](Cargo.toml) [![wasm playground](https://img.shields.io/badge/wasm-live%20playground-654ff0?logo=webassembly&logoColor=white)](https://conalh.github.io/warden/) [![no LLM](https://img.shields.io/badge/decision%20path-no%20LLM-0c4a6e)](#where-this-fits) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Rust](https://img.shields.io/badge/Rust-2024-orange?logo=rust&logoColor=white)](Cargo.toml) [![runtime deps](https://img.shields.io/badge/runtime%20deps-0-2ea44f)](Cargo.toml) [![wasm playground](https://img.shields.io/badge/wasm-live%20playground-654ff0?logo=webassembly&logoColor=white)](https://conalh.github.io/warden/) [![no LLM](https://img.shields.io/badge/decision%20path-no%20LLM-0c4a6e)](#where-this-fits) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 **You write a small declarative policy; `warden` decides whether an agent's action is allowed, denied, or escalated to a human (ask)** — a from-scratch, zero-dependency engine with no LLM in the decision path.
 
@@ -125,7 +125,9 @@ ask   tool("write") when path matches "**/*.json" and not path matches "package.
   spans `/`, `?` is one non-`/` char — so `src/*` matches `src/main.rs` but not
   `src/a/b.rs`, while `src/**` matches both. For **`command`** `/` is an ordinary
   argument character with no structural meaning, so globs there are *flat*: a
-  lone `*` spans `/` and `?` matches it. That is why `command matches "git *"`
+  lone `*` spans `/` and `?` matches it. Windows-style `\` separators in action
+  paths are normalized to `/` before path predicates run. That is why
+  `command matches "git *"`
   matches `git clone a/b` — a segment-bounded `*` would silently miss it. (Tool
   globs in `tool("…")` use the segmented rules, but tool names contain no `/`.)
   `#` starts a comment.
