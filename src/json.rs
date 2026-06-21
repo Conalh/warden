@@ -254,6 +254,9 @@ impl Parser {
                     Some(c) => return Err(format!("invalid escape `\\{c}`")),
                     None => return Err("unterminated escape".to_string()),
                 },
+                Some(c) if (c as u32) < 0x20 => {
+                    return Err("unescaped control character in string".to_string());
+                }
                 Some(c) => out.push(c),
             }
         }
@@ -300,9 +303,24 @@ impl Parser {
         if self.peek() == Some('-') {
             self.bump();
         }
-        while matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
-            self.bump();
+
+        let digits_start = self.pos;
+        match self.peek() {
+            Some('0') => {
+                self.bump();
+                if matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
+                    return Err("leading zeros are not allowed in JSON numbers".to_string());
+                }
+            }
+            Some('1'..='9') => {
+                while matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
+                    self.bump();
+                }
+            }
+            _ => return Err("expected a digit in number".to_string()),
         }
+        debug_assert!(self.pos > digits_start);
+
         // A fraction or exponent means it isn't an integer; reject it rather
         // than truncate, because `Json` has no float variant.
         if matches!(self.peek(), Some('.' | 'e' | 'E')) {
@@ -454,6 +472,26 @@ mod tests {
     fn rejects_non_integer_numbers() {
         assert!(parse("1.5").is_err());
         assert!(parse("1e10").is_err());
+    }
+
+    #[test]
+    fn rejects_unescaped_control_characters_in_strings() {
+        assert!(parse("\"line\nfeed\"").is_err());
+        let raw_control = format!("\"a{}b\"", '\u{0001}');
+        assert!(parse(&raw_control).is_err());
+    }
+
+    #[test]
+    fn accepts_escaped_control_characters_in_strings() {
+        assert_eq!(parse(r#""line\nfeed""#).unwrap(), Json::from("line\nfeed"));
+    }
+
+    #[test]
+    fn rejects_leading_zero_integers() {
+        assert!(parse("01").is_err());
+        assert!(parse("-01").is_err());
+        assert_eq!(parse("0").unwrap(), Json::Int(0));
+        assert_eq!(parse("-0").unwrap(), Json::Int(0));
     }
 
     #[test]

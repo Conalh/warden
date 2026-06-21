@@ -75,6 +75,18 @@ fn wildcard_tool_blocks_secrets_regardless_of_tool() {
 }
 
 #[test]
+fn path_globs_treat_windows_backslash_as_separator() {
+    let src = r#"
+        default allow
+        deny tool("read") when path matches "**/.env*"
+    "#;
+    assert_eq!(
+        decide(src, Action::new("read").with_path(r"config\.env.local")),
+        Effect::Deny
+    );
+}
+
+#[test]
 fn precedence_and_negation_combine() {
     let src =
         r#"ask tool("write") when path matches "**/*.json" and not path matches "package.json""#;
@@ -234,6 +246,11 @@ fn cli_io(args: &[&str]) -> (String, String, i32) {
 /// Like [`cli`], but feed `stdin` to the process — used to drive `--stdin` batch
 /// mode end to end.
 fn cli_stdin(args: &[&str], stdin: &str) -> (String, i32) {
+    let (stdout, _stderr, code) = cli_stdin_io(args, stdin);
+    (stdout, code)
+}
+
+fn cli_stdin_io(args: &[&str], stdin: &str) -> (String, String, i32) {
     use std::io::Write;
     use std::process::{Command, Stdio};
 
@@ -241,17 +258,24 @@ fn cli_stdin(args: &[&str], stdin: &str) -> (String, i32) {
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .expect("failed to spawn the warden binary");
-    child
+    let write_result = child
         .stdin
         .take()
         .expect("child stdin")
-        .write_all(stdin.as_bytes())
-        .expect("write to child stdin");
+        .write_all(stdin.as_bytes());
+    if let Err(err) = write_result {
+        // On Unix, validation failures can close stdin before the test finishes
+        // writing. The process status and stderr assertions still verify the
+        // behavior we care about.
+        assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+    }
     let output = child.wait_with_output().expect("wait for warden binary");
     (
         String::from_utf8(output.stdout).expect("stdout should be utf-8"),
+        String::from_utf8(output.stderr).expect("stderr should be utf-8"),
         output.status.code().expect("process should return a code"),
     )
 }
@@ -316,6 +340,56 @@ fn stdin_cannot_combine_with_tool() {
         code, 64,
         "mixing --stdin with one-shot flags is a usage error"
     );
+}
+
+#[test]
+fn stdin_rejects_unhealthy_policy_before_streaming_verdicts() {
+    let (stdout, stderr, code) = cli_stdin_io(
+        &["examples/shadowed.warden", "--stdin"],
+        "{\"tool\":\"read\",\"path\":\"config/.env.local\"}\n",
+    );
+    assert_eq!(
+        code, 3,
+        "dangerous unreachable rules should block stdin mode"
+    );
+    assert_eq!(
+        stdout, "",
+        "stdin mode must not emit verdicts for an unhealthy policy"
+    );
+    assert!(
+        stderr.contains("dangerous") && stderr.contains("unreachable"),
+        "expected validation diagnostics on stderr, got: {stderr}"
+    );
+}
+
+#[test]
+fn stdin_rejects_failed_policy_self_tests_before_streaming_verdicts() {
+    let mut path = std::env::temp_dir();
+    path.push("warden_cli_stdin_failed_selftest.warden");
+    std::fs::write(
+        &path,
+        r#"
+        deny tool("bash") when command contains "rm -rf"
+        test allow tool("bash") command "rm -rf /"
+        "#,
+    )
+    .unwrap();
+
+    let (stdout, stderr, code) = cli_stdin_io(
+        &[path.to_str().unwrap(), "--stdin"],
+        "{\"tool\":\"bash\",\"command\":\"git status\"}\n",
+    );
+    assert_eq!(code, 4, "failed self-tests should block stdin mode");
+    assert_eq!(
+        stdout, "",
+        "stdin mode must not emit verdicts after failed self-tests"
+    );
+    assert!(
+        stderr.contains("self-test") && stderr.contains("FAIL"),
+        "expected self-test diagnostics on stderr, got: {stderr}"
+    );
+
+    std::fs::remove_file(&path).ok();
 }
 
 #[test]

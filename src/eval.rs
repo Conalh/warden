@@ -3,6 +3,8 @@
 //! default. This is first-match-wins resolution — the simplest semantics that
 //! is still predictable. (`deny`-overrides is a planned v1 toggle.)
 
+use std::borrow::Cow;
+
 use crate::ast::{Effect, Expr, Field, GlobScope, Mode, Policy, Rule};
 use crate::matcher::glob_match;
 
@@ -33,11 +35,19 @@ impl Action {
         self
     }
 
-    fn field(&self, field: Field) -> Option<&str> {
+    fn field(&self, field: Field) -> Option<Cow<'_, str>> {
         match field {
-            Field::Path => self.path.as_deref(),
-            Field::Command => self.command.as_deref(),
+            Field::Path => self.path.as_deref().map(normalize_path),
+            Field::Command => self.command.as_deref().map(Cow::Borrowed),
         }
+    }
+}
+
+fn normalize_path(path: &str) -> Cow<'_, str> {
+    if path.contains('\\') {
+        Cow::Owned(path.replace('\\', "/"))
+    } else {
+        Cow::Borrowed(path)
     }
 }
 
@@ -145,7 +155,7 @@ fn eval_expr(expr: &Expr, action: &Action) -> bool {
         Expr::Not(inner) => !eval_expr(inner, action),
         Expr::Match { field, pattern, .. } => action
             .field(*field)
-            .is_some_and(|value| glob_match(pattern, value, field.glob_scope())),
+            .is_some_and(|value| glob_match(pattern, value.as_ref(), field.glob_scope())),
         Expr::Contains { field, needle, .. } => action
             .field(*field)
             .is_some_and(|value| value.contains(needle.as_str())),
@@ -170,7 +180,7 @@ fn explain(index: usize, rule: &Rule, action: &Action) -> String {
 fn show(action: &Action, field: Field) -> String {
     action
         .field(field)
-        .map_or_else(|| "(unset)".to_string(), |v| format!("\"{v}\""))
+        .map_or_else(|| "(unset)".to_string(), |v| format!("\"{}\"", v.as_ref()))
 }
 
 /// Explain why a condition that evaluated **true** held, naming the deciding
