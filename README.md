@@ -338,6 +338,10 @@ stream back into the value tree reuses the same [`src/json.rs`](src/json.rs); it
 parser is **total** and depth-guarded, so a malformed or pathologically nested
 line is a clean error, never a panic.
 
+Before streaming starts, `--stdin` performs the same policy-health checks as
+normal validation. Parse errors exit `2`; unreachable or redundant rules exit
+`3`; failed self-tests exit `4`; and no JSON verdicts are emitted for the stream.
+
 ## Grammar (EBNF)
 
 ```ebnf

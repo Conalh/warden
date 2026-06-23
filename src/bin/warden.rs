@@ -13,13 +13,14 @@
 //! line, printing one JSON verdict per line — so a long-lived agent streams its
 //! checks through a single process instead of paying spawn cost per action.
 //!
-//! Exit codes: 0 allow/ask, 1 deny, 2 parse error, 3 unreachable rules,
-//! 4 self-test failed, 64 usage error. In `--stdin` mode the exit code is 1 if
-//! any line was malformed, else 0 (per-line effects ride in each JSON verdict).
+//! Exit codes: 0 allow/ask, 1 deny or malformed stdin line, 2 parse error,
+//! 3 unreachable/redundant rules, 4 self-test failed, 64 usage error. In
+//! `--stdin` mode, policy health failures still return 3/4 before streaming;
+//! once streaming starts, per-line effects ride in each JSON verdict.
 
 use std::process::ExitCode;
 
-use warden::{Action, Effect, Json, Mode, Policy, TestOutcome, Verdict};
+use warden::{Action, Effect, Json, Lint, Mode, Policy, Severity, TestOutcome, Verdict};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -98,7 +99,8 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     };
 
     if stdin {
-        if let Some(code) = validate_stdin_policy(&policy, &source) {
+        let health = PolicyHealth::collect(&policy);
+        if let Some(code) = validate_stdin_policy(&health, &source) {
             return Ok(code);
         }
         return Ok(run_stdin(&policy));
@@ -187,77 +189,6 @@ fn run_stdin(policy: &Policy) -> ExitCode {
     }
 }
 
-/// Before `--stdin` becomes a long-lived decision service, make sure the policy
-/// is healthy. Keep success silent so stdout remains a pure verdict stream.
-fn validate_stdin_policy(policy: &Policy, source: &str) -> Option<ExitCode> {
-    let mut exit = 0u8;
-
-    let (lints, noun) = match policy.mode {
-        Mode::FirstMatch => (warden::find_shadowed(policy), "unreachable"),
-        Mode::DenyOverrides => (warden::find_redundant(policy), "redundant"),
-    };
-    if !lints.is_empty() {
-        eprintln!("policy validation failed before --stdin:\n");
-        for lint in &lints {
-            let label = match lint.severity {
-                warden::Severity::Dangerous => "danger",
-                warden::Severity::Redundant => "warning",
-            };
-            eprintln!("{}\n", lint.to_diagnostic().render_labeled(source, label));
-        }
-        let dangerous = lints
-            .iter()
-            .filter(|l| l.severity == warden::Severity::Dangerous)
-            .count();
-        if dangerous > 0 {
-            eprintln!(
-                "{} {noun} rule(s) found, {dangerous} of them dangerous (a stricter \
-                 control silently not enforced).",
-                lints.len()
-            );
-        } else {
-            eprintln!("{} {noun} rule(s) found.", lints.len());
-        }
-        exit = 3;
-    }
-
-    let outcomes = warden::run_tests(policy);
-    let failed = outcomes.iter().filter(|o| !o.passed).count();
-    if failed > 0 {
-        if exit == 0 {
-            eprintln!("policy validation failed before --stdin:\n");
-        } else {
-            eprintln!();
-        }
-        for outcome in &outcomes {
-            if outcome.passed {
-                continue;
-            }
-            eprintln!(
-                "FAIL self-test {}: {} => expected {}, got {}",
-                outcome.number,
-                outcome.action,
-                outcome.expected.as_str(),
-                outcome.actual.as_str()
-            );
-            eprintln!("     reason: {}", outcome.explanation);
-        }
-        eprintln!(
-            "{} self-test(s): {} passed, {} failed.",
-            outcomes.len(),
-            outcomes.len() - failed,
-            failed
-        );
-        exit = 4;
-    }
-
-    if exit == 0 {
-        None
-    } else {
-        Some(ExitCode::from(exit))
-    }
-}
-
 /// Parse one stdin line into an [`Action`]: it must be a JSON object with a
 /// string `tool`, plus optional string `path` and `command`. Unknown fields are
 /// ignored so callers can thread their own metadata through untouched.
@@ -303,13 +234,90 @@ fn error_json(message: &str) -> String {
     Json::object(vec![("status", "error".into()), ("error", message.into())]).render()
 }
 
+struct PolicyHealth {
+    lints: Vec<Lint>,
+    lint_noun: &'static str,
+    tests: Vec<TestOutcome>,
+    exit: u8,
+}
+
+impl PolicyHealth {
+    fn collect(policy: &Policy) -> Self {
+        let (lints, lint_noun) = match policy.mode {
+            Mode::FirstMatch => (warden::find_shadowed(policy), "unreachable"),
+            Mode::DenyOverrides => (warden::find_redundant(policy), "redundant"),
+        };
+        let tests = warden::run_tests(policy);
+        let exit = if tests.iter().any(|outcome| !outcome.passed) {
+            4
+        } else if !lints.is_empty() {
+            3
+        } else {
+            0
+        };
+
+        Self {
+            lints,
+            lint_noun,
+            tests,
+            exit,
+        }
+    }
+
+    fn is_ok(&self) -> bool {
+        self.exit == 0
+    }
+
+    fn exit_code(&self) -> ExitCode {
+        ExitCode::from(self.exit)
+    }
+
+    fn failed_tests(&self) -> usize {
+        self.tests.iter().filter(|outcome| !outcome.passed).count()
+    }
+
+    fn status(&self) -> &'static str {
+        match self.exit {
+            4 => "error",
+            3 => "warning",
+            _ => "ok",
+        }
+    }
+}
+
+/// Before `--stdin` becomes a long-lived decision service, make sure the policy
+/// is healthy. Keep success silent so stdout remains a pure verdict stream.
+fn validate_stdin_policy(health: &PolicyHealth, source: &str) -> Option<ExitCode> {
+    if health.is_ok() {
+        return None;
+    }
+
+    if !health.lints.is_empty() {
+        eprintln!("policy validation failed before --stdin:\n");
+        report_lints(&health.lints, health.lint_noun, source);
+    }
+
+    let failed = health.failed_tests();
+    if failed > 0 {
+        if health.lints.is_empty() {
+            eprintln!("policy validation failed before --stdin:\n");
+        } else {
+            eprintln!();
+        }
+        report_failed_tests(&health.tests, failed);
+    }
+
+    Some(health.exit_code())
+}
+
 /// Validate mode (no action given): print the summary, run the deadness lint
 /// (unreachable rules under `first_match`, dominated/redundant rules under
 /// `deny_overrides`) and any inline self-tests, then return the most serious
 /// exit code — `4` if a self-test failed, else `3` for a dead rule, else `0`.
 fn validate(policy: &Policy, source: &str, json: bool) -> ExitCode {
+    let health = PolicyHealth::collect(policy);
     if json {
-        return validate_json(policy);
+        return validate_json(policy, &health);
     }
 
     println!(
@@ -319,50 +327,18 @@ fn validate(policy: &Policy, source: &str, json: bool) -> ExitCode {
         policy.mode.as_str()
     );
 
-    let mut exit = 0u8;
-
-    // Both modes get a deadness lint, but a different one: `first_match` order
-    // *is* priority so a later rule can be shadowed, while `deny_overrides`
-    // resolves by restrictiveness so the analogous dead rule is one dominated by
-    // an at-least-as-restrictive match (see the two analysis entry points).
-    let (lints, noun) = match policy.mode {
-        Mode::FirstMatch => (warden::find_shadowed(policy), "unreachable"),
-        Mode::DenyOverrides => (warden::find_redundant(policy), "redundant"),
-    };
-    if lints.is_empty() {
-        println!("policy ok: no {noun} rules.");
+    if health.lints.is_empty() {
+        println!("policy ok: no {} rules.", health.lint_noun);
     } else {
-        for lint in &lints {
-            // Surface a dropped control more loudly than dead code.
-            let label = match lint.severity {
-                warden::Severity::Dangerous => "danger",
-                warden::Severity::Redundant => "warning",
-            };
-            eprintln!("{}\n", lint.to_diagnostic().render_labeled(source, label));
-        }
-        let dangerous = lints
-            .iter()
-            .filter(|l| l.severity == warden::Severity::Dangerous)
-            .count();
-        if dangerous > 0 {
-            eprintln!(
-                "{} {noun} rule(s) found, {dangerous} of them dangerous (a stricter \
-                 control silently not enforced).",
-                lints.len()
-            );
-        } else {
-            eprintln!("{} {noun} rule(s) found.", lints.len());
-        }
-        exit = 3;
+        report_lints(&health.lints, health.lint_noun, source);
     }
 
     // Self-tests run in every mode — a deny_overrides policy benefits just as much.
-    if !policy.tests.is_empty() && report_tests(&warden::run_tests(policy)) > 0 {
-        // A broken behavioral expectation outranks a dead rule.
-        exit = 4;
+    if !health.tests.is_empty() {
+        report_tests(&health.tests);
     }
 
-    ExitCode::from(exit)
+    health.exit_code()
 }
 
 /// The `--json` counterpart of [`validate`]: emit one JSON object capturing the
@@ -370,23 +346,9 @@ fn validate(policy: &Policy, source: &str, json: bool) -> ExitCode {
 /// code and the `status` field follow the same precedence as the human path —
 /// `4`/`"error"` if a self-test failed, else `3`/`"warning"` for unreachable
 /// rules, else `0`/`"ok"`.
-fn validate_json(policy: &Policy) -> ExitCode {
-    let mut exit = 0u8;
-    let mut status = "ok";
-
-    // Same mode-aware deadness lint as the human path: shadow under first-match,
-    // domination under deny-overrides. The JSON key stays `unreachable` for
-    // backward compatibility; each entry carries a `severity` distinguishing a
-    // dropped control (`dangerous`) from harmless dead code (`redundant`).
-    let lints = match policy.mode {
-        Mode::FirstMatch => warden::find_shadowed(policy),
-        Mode::DenyOverrides => warden::find_redundant(policy),
-    };
-    if !lints.is_empty() {
-        exit = 3;
-        status = "warning";
-    }
-    let unreachable: Vec<Json> = lints
+fn validate_json(policy: &Policy, health: &PolicyHealth) -> ExitCode {
+    let unreachable: Vec<Json> = health
+        .lints
         .iter()
         .map(|lint| {
             Json::object(vec![
@@ -399,13 +361,8 @@ fn validate_json(policy: &Policy) -> ExitCode {
         })
         .collect();
 
-    let outcomes = warden::run_tests(policy);
-    if outcomes.iter().any(|o| !o.passed) {
-        // A broken behavioral expectation outranks a dead rule.
-        exit = 4;
-        status = "error";
-    }
-    let tests: Vec<Json> = outcomes
+    let tests: Vec<Json> = health
+        .tests
         .iter()
         .map(|o| {
             Json::object(vec![
@@ -423,17 +380,74 @@ fn validate_json(policy: &Policy) -> ExitCode {
         ("rules", Json::Int(policy.rules.len() as i64)),
         ("default", policy.default.as_str().into()),
         ("mode", policy.mode.as_str().into()),
-        ("status", status.into()),
+        ("status", health.status().into()),
         ("unreachable", Json::Array(unreachable)),
         ("tests", Json::Array(tests)),
     ]);
     println!("{}", report.render());
-    ExitCode::from(exit)
+    health.exit_code()
+}
+
+fn report_lints(lints: &[Lint], noun: &str, source: &str) {
+    for lint in lints {
+        eprintln!(
+            "{}\n",
+            lint.to_diagnostic()
+                .render_labeled(source, lint_label(lint))
+        );
+    }
+    let dangerous = dangerous_lints(lints);
+    if dangerous > 0 {
+        eprintln!(
+            "{} {noun} rule(s) found, {dangerous} of them dangerous (a stricter \
+             control silently not enforced).",
+            lints.len()
+        );
+    } else {
+        eprintln!("{} {noun} rule(s) found.", lints.len());
+    }
+}
+
+fn lint_label(lint: &Lint) -> &'static str {
+    match lint.severity {
+        // Surface a dropped control more loudly than dead code.
+        Severity::Dangerous => "danger",
+        Severity::Redundant => "warning",
+    }
+}
+
+fn dangerous_lints(lints: &[Lint]) -> usize {
+    lints
+        .iter()
+        .filter(|lint| lint.severity == Severity::Dangerous)
+        .count()
+}
+
+fn report_failed_tests(outcomes: &[TestOutcome], failed: usize) {
+    for outcome in outcomes {
+        if outcome.passed {
+            continue;
+        }
+        eprintln!(
+            "FAIL self-test {}: {} => expected {}, got {}",
+            outcome.number,
+            outcome.action,
+            outcome.expected.as_str(),
+            outcome.actual.as_str()
+        );
+        eprintln!("     reason: {}", outcome.explanation);
+    }
+    eprintln!(
+        "{} self-test(s): {} passed, {} failed.",
+        outcomes.len(),
+        outcomes.len() - failed,
+        failed
+    );
 }
 
 /// Print one line per inline self-test (with a reason for each failure) plus a
-/// summary; return how many failed.
-fn report_tests(outcomes: &[TestOutcome]) -> usize {
+/// summary.
+fn report_tests(outcomes: &[TestOutcome]) {
     for outcome in outcomes {
         if outcome.passed {
             println!(
@@ -460,7 +474,6 @@ fn report_tests(outcomes: &[TestOutcome]) -> usize {
         outcomes.len() - failed,
         failed
     );
-    failed
 }
 
 fn take_value(args: &[String], i: &mut usize) -> Result<String, String> {

@@ -251,6 +251,20 @@ fn cli_stdin(args: &[&str], stdin: &str) -> (String, i32) {
 }
 
 fn cli_stdin_io(args: &[&str], stdin: &str) -> (String, String, i32) {
+    cli_stdin_io_with(args, stdin, StdinWrite::MustComplete)
+}
+
+fn cli_stdin_io_allow_early_close(args: &[&str], stdin: &str) -> (String, String, i32) {
+    cli_stdin_io_with(args, stdin, StdinWrite::AllowEarlyClose)
+}
+
+#[derive(Clone, Copy)]
+enum StdinWrite {
+    MustComplete,
+    AllowEarlyClose,
+}
+
+fn cli_stdin_io_with(args: &[&str], stdin: &str, write_mode: StdinWrite) -> (String, String, i32) {
     use std::io::Write;
     use std::process::{Command, Stdio};
 
@@ -267,10 +281,9 @@ fn cli_stdin_io(args: &[&str], stdin: &str) -> (String, String, i32) {
         .expect("child stdin")
         .write_all(stdin.as_bytes());
     if let Err(err) = write_result {
-        // On Unix, validation failures can close stdin before the test finishes
-        // writing. The process status and stderr assertions still verify the
-        // behavior we care about.
-        assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+        let early_close = matches!(write_mode, StdinWrite::AllowEarlyClose)
+            && err.kind() == std::io::ErrorKind::BrokenPipe;
+        assert!(early_close, "failed to write stdin: {err}");
     }
     let output = child.wait_with_output().expect("wait for warden binary");
     (
@@ -344,7 +357,7 @@ fn stdin_cannot_combine_with_tool() {
 
 #[test]
 fn stdin_rejects_unhealthy_policy_before_streaming_verdicts() {
-    let (stdout, stderr, code) = cli_stdin_io(
+    let (stdout, stderr, code) = cli_stdin_io_allow_early_close(
         &["examples/shadowed.warden", "--stdin"],
         "{\"tool\":\"read\",\"path\":\"config/.env.local\"}\n",
     );
@@ -375,7 +388,7 @@ fn stdin_rejects_failed_policy_self_tests_before_streaming_verdicts() {
     )
     .unwrap();
 
-    let (stdout, stderr, code) = cli_stdin_io(
+    let (stdout, stderr, code) = cli_stdin_io_allow_early_close(
         &[path.to_str().unwrap(), "--stdin"],
         "{\"tool\":\"bash\",\"command\":\"git status\"}\n",
     );
