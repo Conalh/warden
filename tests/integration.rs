@@ -356,6 +356,29 @@ fn stdin_cannot_combine_with_tool() {
 }
 
 #[test]
+fn action_attributes_require_a_tool() {
+    for args in [
+        ["examples/agent.warden", "--path", "src/main.rs"],
+        ["examples/agent.warden", "--command", "git status"],
+    ] {
+        let (_stdout, stderr, code) = cli_io(&args);
+        assert_eq!(code, 64, "orphan action attributes are usage errors");
+        assert!(
+            stderr.contains("require `--tool <name>`"),
+            "expected an actionable usage error, got: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn version_reports_the_package_version() {
+    let (stdout, stderr, code) = cli_io(&["--version"]);
+    assert_eq!(code, 0);
+    assert_eq!(stdout, format!("warden {}\n", env!("CARGO_PKG_VERSION")));
+    assert_eq!(stderr, "");
+}
+
+#[test]
 fn stdin_rejects_unhealthy_policy_before_streaming_verdicts() {
     let (stdout, stderr, code) = cli_stdin_io_allow_early_close(
         &["examples/shadowed.warden", "--stdin"],

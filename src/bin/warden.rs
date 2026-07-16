@@ -4,6 +4,7 @@
 //!   warden <policy-file> [--json]                     validate the policy
 //!   warden <policy-file> --tool <name> [--path P] [--command C] [--json]
 //!   warden <policy-file> --stdin                       stream JSONL decisions
+//!   warden --version
 //!
 //! `--json` swaps the human-readable output for a single machine-readable JSON
 //! object on stdout (nothing on stderr), so `warden` drops into a CI step or an
@@ -39,6 +40,13 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         print_usage();
         return Ok(ExitCode::SUCCESS);
     }
+    if args[0] == "-V" || args[0] == "--version" {
+        if args.len() != 1 {
+            return Err("`--version` does not accept additional arguments".to_string());
+        }
+        println!("warden {}", env!("CARGO_PKG_VERSION"));
+        return Ok(ExitCode::SUCCESS);
+    }
 
     let path = &args[0];
     let mut tool: Option<String> = None;
@@ -67,6 +75,10 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             "`--stdin` reads actions from stdin; do not also pass --tool/--path/--command"
                 .to_string(),
         );
+    }
+
+    if !stdin && tool.is_none() && (action_path.is_some() || command.is_some()) {
+        return Err("`--path` and `--command` require `--tool <name>`".to_string());
     }
 
     let source = std::fs::read_to_string(path).map_err(|e| format!("cannot read `{path}`: {e}"))?;
@@ -490,6 +502,7 @@ fn print_usage() {
          \x20 warden <policy-file> [--json]\n\
          \x20 warden <policy-file> --tool <name> [--path <p>] [--command <c>] [--json]\n\
          \x20 warden <policy-file> --stdin\n\n\
+         \x20 warden --version\n\n\
          EXAMPLES:\n\
          \x20 warden policy.warden\n\
          \x20 warden policy.warden --tool bash --command \"rm -rf /\"\n\

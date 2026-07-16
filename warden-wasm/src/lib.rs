@@ -197,3 +197,45 @@ pub fn decide(source: &str, tool: &str, path: &str, command: &str) -> Decision {
         rule: verdict.matched_rule.map(|i| i as u32 + 1),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[wasm_bindgen_test]
+    fn clean_policy_validates_through_the_wasm_boundary() {
+        let report = validate(
+            r#"
+            default ask
+            deny tool("bash") when command contains "rm -rf"
+            "#,
+        );
+
+        assert_eq!(report.status(), "ok");
+        assert!(report.text().contains("policy ok"));
+    }
+
+    #[wasm_bindgen_test]
+    fn deny_verdict_keeps_its_trace_and_rule_number() {
+        let decision = decide(
+            r#"deny tool("bash") when command contains "rm -rf""#,
+            "bash",
+            "",
+            "rm -rf /tmp",
+        );
+
+        assert_eq!(decision.effect(), "deny");
+        assert_eq!(decision.rule(), Some(1));
+        assert!(decision.reason().contains("rm -rf /tmp"));
+    }
+
+    #[wasm_bindgen_test]
+    fn invalid_policy_returns_a_safe_invalid_decision() {
+        let decision = decide("allow tool(", "read", "src/lib.rs", "");
+
+        assert_eq!(decision.effect(), "invalid");
+        assert_eq!(decision.rule(), None);
+        assert!(decision.reason().contains("does not parse"));
+    }
+}

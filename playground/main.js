@@ -140,4 +140,11 @@ async function main() {
   loadExample("agent");
 }
 
-main();
+main().catch((error) => {
+  reportBadge.textContent = "error";
+  reportBadge.className = "badge error";
+  reportText.textContent = `The WebAssembly engine could not start: ${error instanceof Error ? error.message : String(error)}`;
+  decisionBadge.textContent = "UNAVAILABLE";
+  decisionBadge.className = "verdict invalid";
+  decisionReason.textContent = "Reload the page to try again.";
+});

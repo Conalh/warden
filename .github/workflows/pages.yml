@@ -1,10 +1,16 @@
 name: pages
 
-# Builds the WebAssembly playground and deploys it to GitHub Pages.
-# Manual-only on purpose: going live is an explicit action, not an automatic
-# consequence of pushing. To use it, enable Pages once
-# (Settings -> Pages -> Source: "GitHub Actions"), then run this workflow.
+# Builds, tests, and deploys the WebAssembly playground to GitHub Pages.
 on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "warden-wasm/**"
+      - "playground/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/pages.yml"
   workflow_dispatch:
 
 # Allow this workflow to publish to Pages.
@@ -26,11 +32,19 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Rust + wasm target
-        run: rustup target add wasm32-unknown-unknown
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
 
       - name: Install wasm-pack
-        run: cargo install wasm-pack --locked
+        run: cargo install wasm-pack --version 0.15.0 --locked
+
+      - name: Test core engine
+        run: cargo test --all --locked
+
+      - name: Test WebAssembly boundary in Node
+        run: wasm-pack test --node warden-wasm
 
       - name: Build the wasm bundle into playground/pkg
         run: wasm-pack build warden-wasm --release --target web --out-dir ../playground/pkg

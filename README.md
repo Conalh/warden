@@ -1,10 +1,8 @@
 # warden
 
-[![Rust](https://img.shields.io/badge/Rust-2024-orange?logo=rust&logoColor=white)](Cargo.toml) [![runtime deps](https://img.shields.io/badge/runtime%20deps-0-2ea44f)](Cargo.toml) [![wasm playground](https://img.shields.io/badge/wasm-live%20playground-654ff0?logo=webassembly&logoColor=white)](https://conalh.github.io/warden/) [![no LLM](https://img.shields.io/badge/decision%20path-no%20LLM-0c4a6e)](#where-this-fits) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![CI](https://github.com/Conalh/warden/actions/workflows/ci.yml/badge.svg)](https://github.com/Conalh/warden/actions/workflows/ci.yml) [![release](https://img.shields.io/github/v/release/Conalh/warden?label=release)](https://github.com/Conalh/warden/releases/latest) [![Rust](https://img.shields.io/badge/Rust-2024-orange?logo=rust&logoColor=white)](Cargo.toml) [![runtime deps](https://img.shields.io/badge/runtime%20deps-0-2ea44f)](Cargo.toml) [![wasm playground](https://img.shields.io/badge/wasm-live%20playground-654ff0?logo=webassembly&logoColor=white)](https://conalh.github.io/warden/) [![no LLM](https://img.shields.io/badge/decision%20path-no%20LLM-0c4a6e)](#where-this-fits) [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 **You write a small declarative policy; `warden` decides whether an agent's action is allowed, denied, or escalated to a human (ask)** — a from-scratch, zero-dependency engine with no LLM in the decision path.
-
-<!-- TODO: add 10s demo GIF here -->
 
 ```sh
 cargo run -- examples/agent.warden --tool bash --command "rm -rf /tmp"
@@ -59,6 +57,19 @@ surface. "One policy everywhere" is true for the MCP-call surface, not for
 in-client tool permissions.
 
 ## Quickstart
+
+Download a checksummed binary for Windows, Linux, or macOS from the
+[latest GitHub release](https://github.com/Conalh/warden/releases/latest), or
+install the tagged source directly with Cargo:
+
+```sh
+cargo install --git https://github.com/Conalh/warden --tag v0.1.0 --locked
+warden --version
+```
+
+The unrelated `warden` name on crates.io is already occupied, so this project
+is distributed through versioned Git tags and GitHub release artifacts instead of
+publishing under someone else's crate name.
 
 ```sh
 # Validate a policy
@@ -437,11 +448,14 @@ per precedence level — see [`src/parser.rs`](src/parser.rs).
 ## Tests
 
 ```sh
-cargo test
+cargo test --all --locked
+wasm-pack test --node warden-wasm
 ```
 
 Unit tests live beside each module; end-to-end policy scenarios are in
-[`tests/integration.rs`](tests/integration.rs).
+[`tests/integration.rs`](tests/integration.rs). The CI gate currently runs
+109 core/CLI tests, three WebAssembly boundary tests, Clippy, rustfmt, an MSRV
+check, a release build, and `cargo package` verification.
 
 ### Fuzzing
 
@@ -472,3 +486,6 @@ recursing without limit.
 ## License
 
 MIT
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development expectations and
+[SECURITY.md](SECURITY.md) for private vulnerability reporting.

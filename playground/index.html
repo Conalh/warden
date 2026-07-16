@@ -3,6 +3,18 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Try Warden's deterministic allow, deny, and ask policy language directly in your browser."
+    />
+    <meta name="theme-color" content="#111827" />
+    <meta property="og:title" content="Warden policy playground" />
+    <meta
+      property="og:description"
+      content="Edit a policy, evaluate an agent action, and inspect the exact rule trace—all locally in WebAssembly."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://conalh.github.io/warden/" />
     <title>warden — policy playground</title>
     <link rel="stylesheet" href="./style.css" />
   </head>
@@ -31,11 +43,12 @@
         </div>
         <textarea
           id="policy"
+          aria-labelledby="policy-heading"
           spellcheck="false"
           autocomplete="off"
           autocapitalize="off"
         ></textarea>
-        <div class="report">
+        <div class="report" aria-live="polite">
           <span id="report-badge" class="badge">…</span>
           <pre id="report-text"></pre>
         </div>
@@ -53,7 +66,7 @@
           </label>
         </form>
 
-        <div class="decision">
+        <div class="decision" aria-live="polite">
           <div id="decision-badge" class="verdict">…</div>
           <p id="decision-reason" class="reason"></p>
           <p id="decision-rule" class="rule"></p>
